@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "custom-gemini-cli"
+version = "0.1.0"
+description = "Lightweight Gemini CLI with Google Search grounding"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "google-genai",
+]
+
+[project.scripts]
+gemini = "custom_gemini_cli.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
