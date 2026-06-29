@@ -1,0 +1,9 @@
+Juan José Farina (born July 27, 1990) is a software engineer from Rosario, Argentina. He currently works as a Senior Software Engineer at PwC, primarily using Python and building backend, AI, MLOps, and LLM-based systems. His technical interests include software architecture, distributed systems, concurrency, scalability, domain-driven design, clean architecture, and AI engineering. He enjoys learning from first principles and often writes articles or builds side projects to deepen his understanding.
+
+Before software became his career, dance was a defining part of his life. He spent over a decade teaching and performing hip-hop and classical ballet, trained in the Vaganova method—including studies in Italy—founded Academia Rosario Ballet, and wrote three books on ballet pedagogy. He has since retired from professional dance teaching.
+
+He has pursued several academic paths, including Computer Systems Analysis, Dance Teaching, and a Technical Degree in Programming, while remaining largely self-taught throughout his career.
+
+Outside work, he has a wide range of long-term interests, including personal finance, investing, genealogy, gaming, anime, history, travel, and technology. He enjoys designing software projects, researching topics in depth, and organizing knowledge into structured frameworks. He is also a member of Mensa.
+
+Personally, Juan values rationality, curiosity, and independence. He tends to approach decisions analytically, preferring structured reasoning over intuition, and is drawn to understanding how complex systems work, whether they involve software, education, finance, or everyday life. He values loyalty in friendships, maintains a close relationship with his family, and generally prefers long-term thinking over short-term gains. He describes himself as technically atheist while remaining open to any worldview supported by sufficient evidence.

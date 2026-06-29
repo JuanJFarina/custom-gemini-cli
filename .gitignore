@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Custom Gemini CLI runtime data
+data/conversations/*.json
