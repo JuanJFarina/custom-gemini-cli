@@ -107,3 +107,5 @@ Health check path: /healthcheck
 ```
 
 For durable SQLite storage on Render, attach a persistent disk and set `SQLITE_PATH` to a path inside that mounted disk. Without a persistent disk, SQLite is still useful for quick testing, but the database can be lost when the instance restarts or redeploys.
+
+On Vercel, SQLite is only suitable for quick testing because the filesystem is ephemeral. The app automatically stores SQLite under `/tmp` when it detects Vercel, so a relative `SQLITE_PATH` such as `data/bot_conversations.sqlite3` becomes `/tmp/bot_conversations.sqlite3`.

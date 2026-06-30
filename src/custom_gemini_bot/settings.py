@@ -9,6 +9,7 @@ from custom_gemini_cli.config import DEFAULT_MODEL, load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SQLITE_PATH = PROJECT_ROOT / "data" / "bot_conversations.sqlite3"
+VERCEL_SQLITE_DIR = Path("/tmp")
 
 
 @dataclass(frozen=True)
@@ -43,7 +44,7 @@ class BotSettings:
 
 def get_settings() -> BotSettings:
     load_dotenv()
-    sqlite_path = Path(os.environ.get("SQLITE_PATH", str(DEFAULT_SQLITE_PATH))).expanduser()
+    sqlite_path = _get_sqlite_path()
 
     return BotSettings(
         gemini_api_key=os.environ.get("GEMINI_API_KEY"),
@@ -63,4 +64,23 @@ def _parse_int(value: str | None) -> int | None:
         return int(value)
     except ValueError:
         return None
+
+
+def _get_sqlite_path() -> Path:
+    configured_path = os.environ.get("SQLITE_PATH")
+    if not _is_vercel():
+        return Path(configured_path or str(DEFAULT_SQLITE_PATH)).expanduser()
+
+    if not configured_path:
+        return VERCEL_SQLITE_DIR / DEFAULT_SQLITE_PATH.name
+
+    path = Path(configured_path).expanduser()
+    if path.is_absolute() and str(path).startswith(str(VERCEL_SQLITE_DIR)):
+        return path
+
+    return VERCEL_SQLITE_DIR / path.name
+
+
+def _is_vercel() -> bool:
+    return bool(os.environ.get("VERCEL"))
 
