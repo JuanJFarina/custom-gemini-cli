@@ -15,7 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
 PERSONAL_HISTORY_PATH = DATA_DIR / "juan_personal_history.md"
 CONVERSATIONS_DIR = DATA_DIR / "conversations"
-LATEST_CONVERSATION_COUNT = 3
+CONVERSATION_CONTEXT_CHAR_LIMIT = 4000
 
 
 def build_system_instruction() -> str:
@@ -50,16 +50,42 @@ def _load_latest_conversations() -> str:
     if not CONVERSATIONS_DIR.is_dir():
         return "No previous conversations yet."
 
-    latest_paths = sorted(CONVERSATIONS_DIR.glob("*.json"), reverse=True)[
-        :LATEST_CONVERSATION_COUNT
-    ]
-    if not latest_paths:
+    conversation_paths = sorted(CONVERSATIONS_DIR.glob("*.json"), reverse=True)
+    if not conversation_paths:
         return "No previous conversations yet."
 
-    conversations = [
-        path.read_text(encoding="utf-8").strip() for path in reversed(latest_paths)
-    ]
-    return "\n".join(conversation for conversation in conversations if conversation)
+    conversations: list[str] = []
+    context_length = 0
+    for path in conversation_paths:
+        conversation = _format_conversation_for_context(path)
+        if not conversation:
+            continue
+
+        separator_length = 1 if conversations else 0
+        next_context_length = context_length + separator_length + len(conversation)
+        if next_context_length > CONVERSATION_CONTEXT_CHAR_LIMIT:
+            break
+
+        conversations.append(conversation)
+        context_length = next_context_length
+
+    if not conversations:
+        return "No previous conversations fit within the context limit."
+
+    return "\n".join(reversed(conversations))
+
+
+def _format_conversation_for_context(path: Path) -> str:
+    try:
+        conversation = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+
+    if not isinstance(conversation, dict):
+        return ""
+
+    conversation.pop("model", None)
+    return json.dumps(conversation, ensure_ascii=False, indent=2)
 
 
 def _new_conversation_path() -> Path:
