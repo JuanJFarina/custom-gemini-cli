@@ -9,7 +9,10 @@ description = "Lightweight Gemini CLI with Google Search grounding"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "fastapi",
     "google-genai",
+    "httpx",
+    "uvicorn",
 ]
 
 [project.scripts]

@@ -219,3 +219,5 @@ __marimo__/
 
 # Custom Gemini CLI runtime data
 data/conversations/*.json
+data/*.sqlite3
+data/*.sqlite3-*
