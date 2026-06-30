@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import gspread
-from gspread.utils import ValueInputOption, ValueRenderOption
 from google.oauth2.service_account import Credentials
+from gspread.utils import ValueInputOption, ValueRenderOption
 
 
 GOOGLE_SHEETS_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -73,4 +73,3 @@ def _decode_service_account_info(encoded_credentials: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 must decode to a JSON object.")
     return payload
-

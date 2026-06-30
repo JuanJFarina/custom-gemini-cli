@@ -25,7 +25,7 @@ def generate_content(
                 types.Tool(
                     google_search=types.GoogleSearch(),
                 )
-            ]
+            ],
         ),
     )
 

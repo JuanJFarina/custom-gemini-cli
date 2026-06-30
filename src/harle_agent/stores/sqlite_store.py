@@ -13,8 +13,8 @@ NO_CONVERSATIONS_MESSAGE = "No conversations yet"
 
 @dataclass(frozen=True)
 class ConversationRecord:
-    telegram_chat_id: int
-    telegram_user_id: int
+    chat_id: int
+    user_id: int
     prompt: str
     response: str
     model: str
@@ -22,18 +22,47 @@ class ConversationRecord:
 
 
 class SQLiteConversationStore:
-    def __init__(self, database_path: Path) -> None:
+    def __init__(self, *, database_path: Path, chat_id: int, user_id: int) -> None:
         self.database_path = database_path
+        self.chat_id = chat_id
+        self.user_id = user_id
 
-    def save_conversation(
-        self,
-        *,
-        telegram_chat_id: int,
-        telegram_user_id: int,
-        prompt: str,
-        response: str,
-        model: str,
-    ) -> None:
+    def load_conversations(self) -> str:
+        self._ensure_schema()
+
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT telegram_chat_id, telegram_user_id, prompt, response, model, created_at
+                FROM conversations
+                WHERE telegram_chat_id = ? AND telegram_user_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 50
+                """,
+                (self.chat_id, self.user_id),
+            ).fetchall()
+
+        if not rows:
+            return NO_CONVERSATIONS_MESSAGE
+
+        conversations: list[str] = []
+        context_length = 0
+        for row in rows:
+            conversation = _format_conversation_for_context(_record_from_row(row))
+            separator_length = 1 if conversations else 0
+            next_context_length = context_length + separator_length + len(conversation)
+            if next_context_length > CONVERSATION_CONTEXT_CHAR_LIMIT:
+                break
+
+            conversations.append(conversation)
+            context_length = next_context_length
+
+        if not conversations:
+            return NO_CONVERSATIONS_MESSAGE
+
+        return "\n".join(reversed(conversations))
+
+    def save_conversation(self, *, prompt: str, response_text: str, model: str) -> None:
         self._ensure_schema()
         created_at = datetime.now(UTC).isoformat(timespec="seconds")
 
@@ -51,55 +80,14 @@ class SQLiteConversationStore:
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    telegram_chat_id,
-                    telegram_user_id,
+                    self.chat_id,
+                    self.user_id,
                     prompt,
-                    response,
+                    response_text,
                     model,
                     created_at,
                 ),
             )
-
-    def load_recent_context(
-        self,
-        *,
-        telegram_chat_id: int,
-        telegram_user_id: int,
-        char_limit: int = CONVERSATION_CONTEXT_CHAR_LIMIT,
-    ) -> str:
-        self._ensure_schema()
-
-        with self._connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT telegram_chat_id, telegram_user_id, prompt, response, model, created_at
-                FROM conversations
-                WHERE telegram_chat_id = ? AND telegram_user_id = ?
-                ORDER BY created_at DESC, id DESC
-                LIMIT 50
-                """,
-                (telegram_chat_id, telegram_user_id),
-            ).fetchall()
-
-        if not rows:
-            return NO_CONVERSATIONS_MESSAGE
-
-        conversations: list[str] = []
-        context_length = 0
-        for row in rows:
-            conversation = _format_conversation_for_context(_record_from_row(row))
-            separator_length = 1 if conversations else 0
-            next_context_length = context_length + separator_length + len(conversation)
-            if next_context_length > char_limit:
-                break
-
-            conversations.append(conversation)
-            context_length = next_context_length
-
-        if not conversations:
-            return NO_CONVERSATIONS_MESSAGE
-
-        return "\n".join(reversed(conversations))
 
     def _ensure_schema(self) -> None:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,8 +119,8 @@ class SQLiteConversationStore:
 
 def _record_from_row(row: sqlite3.Row | tuple[object, ...]) -> ConversationRecord:
     return ConversationRecord(
-        telegram_chat_id=int(row[0]),
-        telegram_user_id=int(row[1]),
+        chat_id=int(row[0]),
+        user_id=int(row[1]),
         prompt=str(row[2]),
         response=str(row[3]),
         model=str(row[4]),
@@ -144,12 +132,11 @@ def _format_conversation_for_context(record: ConversationRecord) -> str:
     return json.dumps(
         {
             "conversation_date": record.created_at,
-            "telegram_chat_id": record.telegram_chat_id,
-            "telegram_user_id": record.telegram_user_id,
+            "telegram_chat_id": record.chat_id,
+            "telegram_user_id": record.user_id,
             "juan_jose_farina_prompt": record.prompt,
             "response": record.response,
         },
         ensure_ascii=False,
         indent=2,
     )
-

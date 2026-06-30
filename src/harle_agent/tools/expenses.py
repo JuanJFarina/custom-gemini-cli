@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from custom_gemini_cli.runtime_context import ROSARIO_TIMEZONE
-from custom_gemini_cli.tools.google_sheets import (
+from harle_agent.runtime_context import ROSARIO_TIMEZONE
+from harle_agent.tools.google_sheets import (
     GoogleSheetsClient,
     load_google_sheets_settings_from_env,
 )
@@ -206,4 +206,3 @@ def _resolve_category(category: str) -> str:
 
 def _cell_for(*, day: int, category: str) -> str:
     return f"{CATEGORY_COLUMNS[category]}{day + 1}"
-

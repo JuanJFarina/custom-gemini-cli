@@ -9,4 +9,3 @@ class ConversationStore(Protocol):
 
     def save_conversation(self, *, prompt: str, response_text: str, model: str) -> None:
         """Persist the final user prompt and assistant response."""
-

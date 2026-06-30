@@ -7,28 +7,28 @@ from typing import Any
 from google.genai import types
 from pydantic import ValidationError
 
-from custom_gemini_cli.config import DEFAULT_MODEL
-from custom_gemini_cli.gemini import (
+from harle_agent.config import DEFAULT_MODEL
+from harle_agent.llm_client import (
     create_client,
     extract_response_text,
     generate_grounded_content,
     is_unavailable_model_error,
 )
-from custom_gemini_cli.memory import PERSONAL_HISTORY_PATH
-from custom_gemini_cli.prompts.system import SYSTEM_PROMPT
-from custom_gemini_cli.reasoning import (
+from harle_agent.memory import PERSONAL_HISTORY_PATH
+from harle_agent.prompts.system import SYSTEM_PROMPT
+from harle_agent.reasoning import (
     HarleReasoning,
     json_repair_prompt,
     parse_harle_reasoning,
     reasoning_protocol_text,
     tool_result_prompt,
 )
-from custom_gemini_cli.runtime_context import (
+from harle_agent.runtime_context import (
     get_current_time_and_date,
     get_current_weather,
 )
-from custom_gemini_cli.stores.protocol import ConversationStore
-from custom_gemini_cli.tools.expenses import ExpenseTool
+from harle_agent.stores.protocol import ConversationStore
+from harle_agent.tools.expenses import ExpenseTool
 
 
 @dataclass
@@ -254,5 +254,3 @@ def _load_personal_history(path: Path) -> str:
 
     content = path.read_text(encoding="utf-8").strip()
     return content or "No personal history has been recorded yet."
-
-

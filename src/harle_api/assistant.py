@@ -4,15 +4,15 @@ import asyncio
 
 import httpx
 
-from custom_gemini_bot.settings import BotSettings
-from custom_gemini_bot.telegram import (
+from harle_agent.agent import Harle
+from harle_agent.stores.sqlite_store import SQLiteConversationStore
+from harle_agent.tools.expenses import build_expense_tool_from_env
+from harle_api.settings import BotSettings
+from harle_api.telegram import (
     IncomingTelegramMessage,
     send_message,
     send_typing_action,
 )
-from custom_gemini_cli.harle import Harle
-from custom_gemini_cli.stores.sqlite_store import SQLiteConversationStore
-from custom_gemini_cli.tools.expenses import build_expense_tool_from_env
 
 
 async def process_telegram_message(
@@ -59,4 +59,3 @@ def _generate_response(
         expense_tool=build_expense_tool_from_env(),
     )
     return harle.respond(message.text)
-

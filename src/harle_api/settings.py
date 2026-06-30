@@ -4,7 +4,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from custom_gemini_cli.config import DEFAULT_MODEL, load_dotenv
+from harle_agent.config import DEFAULT_MODEL, load_dotenv
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -83,4 +83,3 @@ def _get_sqlite_path() -> Path:
 
 def _is_vercel() -> bool:
     return bool(os.environ.get("VERCEL"))
-

@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from custom_gemini_cli.tools.expenses import (
+from harle_agent.tools.expenses import (
     CATEGORY_COLUMNS,
     CATEGORY_GUIDANCE,
     MONTH_SHEET_NAMES,
@@ -168,4 +168,3 @@ def _extract_json_object(text: str) -> str:
     if start == -1 or end == -1 or end < start:
         return stripped
     return stripped[start : end + 1]
-

@@ -19,10 +19,10 @@ dependencies = [
 ]
 
 [project.scripts]
-gemini = "custom_gemini_cli.cli:main"
+gemini = "harle_cli.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.vercel]
-entrypoint = "src.custom_gemini_bot.app:app"
+entrypoint = "harle_api.app:app"

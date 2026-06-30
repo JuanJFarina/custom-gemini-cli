@@ -5,10 +5,10 @@ from typing import Annotated, Any
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 
-from custom_gemini_bot.assistant import process_telegram_message
-from custom_gemini_bot.settings import get_settings
-from custom_gemini_bot.telegram import extract_text_message, is_allowed_user
-from custom_gemini_cli import __version__
+from harle_agent import __version__
+from harle_api.assistant import process_telegram_message
+from harle_api.settings import get_settings
+from harle_api.telegram import extract_text_message, is_allowed_user
 
 
 app = FastAPI(
@@ -51,4 +51,3 @@ async def post_telegram_webhook(
         message=message,
     )
     return JSONResponse(content={"ok": True, "accepted": True})
-

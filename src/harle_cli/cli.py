@@ -3,12 +3,13 @@ from __future__ import annotations
 from argparse import ArgumentParser, Namespace
 from sys import stderr
 
-from custom_gemini_cli import __version__
-from .config import DEFAULT_MODEL, get_api_key, get_model, load_dotenv
-from .grounding import print_sources
-from .harle import Harle
-from .stores.file_store import FileConversationStore
-from .tools.expenses import build_expense_tool_from_env
+from harle_agent import __version__
+from harle_agent.agent import Harle
+from harle_agent.config import DEFAULT_MODEL
+from harle_agent.stores.file_store import FileConversationStore
+from harle_agent.tools.expenses import build_expense_tool_from_env
+from harle_cli.config import get_api_key, get_model, load_dotenv
+from harle_cli.grounding import print_sources
 
 
 def main() -> int:

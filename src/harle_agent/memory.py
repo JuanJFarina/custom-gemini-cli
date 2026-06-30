@@ -4,8 +4,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from custom_gemini_cli.prompts.system import SYSTEM_PROMPT
-from custom_gemini_cli.runtime_context import (
+from harle_agent.prompts.system import SYSTEM_PROMPT
+from harle_agent.runtime_context import (
     get_current_time_and_date,
     get_current_weather,
 )

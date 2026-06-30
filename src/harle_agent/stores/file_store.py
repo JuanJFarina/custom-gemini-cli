@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from custom_gemini_cli.memory import (
+from harle_agent.memory import (
     CONVERSATION_CONTEXT_CHAR_LIMIT,
     CONVERSATIONS_DIR,
 )
@@ -85,4 +85,3 @@ def _format_conversation(prompt: str, response_text: str, model: str) -> str:
         ensure_ascii=False,
         indent=2,
     )
-

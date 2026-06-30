@@ -105,7 +105,7 @@ python -m pip install -r requirements.txt
 Run locally:
 
 ```powershell
-uvicorn custom_gemini_bot.app:app --reload
+uvicorn harle_api.app:app --reload
 ```
 
 Health check:
@@ -143,7 +143,7 @@ Render Web Service settings:
 
 ```text
 Build command: python -m pip install -r requirements.txt
-Start command: uvicorn custom_gemini_bot.app:app --host 0.0.0.0 --port $PORT
+Start command: uvicorn harle_api.app:app --host 0.0.0.0 --port $PORT
 Health check path: /healthcheck
 ```
 

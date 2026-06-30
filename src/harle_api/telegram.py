@@ -95,4 +95,3 @@ def _parse_int(value: object) -> int | None:
         return int(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
-
