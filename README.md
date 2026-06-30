@@ -47,6 +47,45 @@ Show grounding source URLs when Gemini returns them:
 gemini --show-sources "what is the current trend in AI ?"
 ```
 
+## Expense updates
+
+The assistant can update Juan's Google Sheets expense tracker when Google Sheets credentials are configured. This works from both the CLI and Telegram bot because both entry points use the same assistant engine.
+
+The first supported tool is for non-credit payments only. It updates the category cell for a given day/month by appending to the existing formula:
+
+```text
+=100 -> =100+200 for a normal expense
+=100 -> =100-200 for a refund
+```
+
+Required Google Sheets environment variables:
+
+```env
+EXPENSES_SPREADSHEET_ID=your_expenses_spreadsheet_id_here
+GOOGLE_SERVICE_ACCOUNT_JSON_BASE64=base64_encoded_service_account_json_here
+```
+
+To enable writes:
+
+1. Enable the Google Sheets API in a Google Cloud project.
+2. Create a service account and download its JSON credential.
+3. Share the expenses spreadsheet with the service account `client_email` as Editor.
+4. Base64-encode the JSON credential and set it as `GOOGLE_SERVICE_ACCOUNT_JSON_BASE64`.
+
+PowerShell helper:
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("service-account.json"))
+```
+
+The tool only writes to the confirmed category columns:
+
+```text
+B:I -> alquileres, servicios_esenciales, servicios_no_esenciales, hogar, transporte, salidas, shopping, otros
+```
+
+Columns for totals, moving averages, and past markers are never written by the tool.
+
 ## Notes
 
 - This uses the official Gemini API through `google-genai`.
@@ -84,6 +123,8 @@ TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
 TELEGRAM_ALLOWED_USER_ID=123456789
 TELEGRAM_WEBHOOK_SECRET=your_random_webhook_secret_here
 SQLITE_PATH=data/bot_conversations.sqlite3
+EXPENSES_SPREADSHEET_ID=your_expenses_spreadsheet_id_here
+GOOGLE_SERVICE_ACCOUNT_JSON_BASE64=base64_encoded_service_account_json_here
 ```
 
 Create the bot with Telegram's `@BotFather`, then register the Render webhook:

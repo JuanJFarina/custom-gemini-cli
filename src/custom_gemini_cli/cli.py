@@ -5,14 +5,10 @@ from sys import stderr
 
 from custom_gemini_cli import __version__
 from .config import DEFAULT_MODEL, get_api_key, get_model, load_dotenv
-from .gemini import (
-    create_client,
-    extract_response_text,
-    generate_content,
-    is_unavailable_model_error,
-)
 from .grounding import print_sources
-from .memory import build_system_instruction, save_conversation
+from .harle import Harle
+from .stores.file_store import FileConversationStore
+from .tools.expenses import build_expense_tool_from_env
 
 
 def main() -> int:
@@ -29,45 +25,30 @@ def main() -> int:
         return 2
 
     model = get_model(args.model)
-    effective_model = model
-    system_instruction = build_system_instruction()
-    client = create_client(api_key=api_key)
+    harle = Harle(
+        model=model,
+        api_key=api_key,
+        conversation_store=FileConversationStore(),
+        expense_tool=build_expense_tool_from_env(),
+    )
 
     try:
-        response = generate_content(client, model, prompt, system_instruction)
+        response_text = harle.respond(prompt)
     except Exception as exc:
-        if model != DEFAULT_MODEL and is_unavailable_model_error(exc):
-            print(
-                f"Configured model '{model}' is unavailable; retrying with {DEFAULT_MODEL}.",
-                file=stderr,
-            )
-            try:
-                response = generate_content(
-                    client,
-                    DEFAULT_MODEL,
-                    prompt,
-                    system_instruction,
-                )
-                effective_model = DEFAULT_MODEL
-            except Exception as retry_exc:
-                print(f"Gemini request failed: {retry_exc}", file=stderr)
-                return 1
-        else:
-            print(f"Gemini request failed: {exc}", file=stderr)
-            return 1
-    finally:
-        close = getattr(client, "close", None)
-        if callable(close):
-            close()
+        print(f"Gemini request failed: {exc}", file=stderr)
+        return 1
 
-    response_text = extract_response_text(response)
+    if harle.effective_model != model and harle.effective_model == DEFAULT_MODEL:
+        print(
+            f"Configured model '{model}' is unavailable; retried with {DEFAULT_MODEL}.",
+            file=stderr,
+        )
+
     if response_text:
         print(f"\nGemini: {response_text}\n")
 
-    if args.show_sources:
-        print_sources(response)
-
-    save_conversation(prompt=prompt, response_text=response_text, model=effective_model)
+    if args.show_sources and harle.last_response is not None:
+        print_sources(harle.last_response)
 
     return 0
 
