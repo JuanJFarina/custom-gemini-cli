@@ -6,8 +6,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from google.genai import types
-
 from custom_gemini_cli.runtime_context import ROSARIO_TIMEZONE
 from custom_gemini_cli.tools.google_sheets import (
     GoogleSheetsClient,
@@ -68,47 +66,6 @@ class UpdateExpenseArgs:
 class ExpenseTool:
     def __init__(self, sheets_client: GoogleSheetsClient) -> None:
         self.sheets_client = sheets_client
-
-    @property
-    def declaration(self) -> types.FunctionDeclaration:
-        return types.FunctionDeclaration(
-            name="add_non_credit_expense",
-            description=(
-                "Add a non-credit expense or refund adjustment to Juan's Google "
-                "Sheets expense tracker. Use this only for normal one-time expenses "
-                "or refunds, not for credit-card installments. Day and month are "
-                "optional and default to the current Rosario date. "
-                f"{CATEGORY_GUIDANCE}"
-            ),
-            parameters_json_schema={
-                "type": "object",
-                "properties": {
-                    "amount": {
-                        "type": "integer",
-                        "description": "Positive expense amount in Argentine pesos.",
-                    },
-                    "category": {
-                        "type": "string",
-                        "enum": list(CATEGORY_COLUMNS),
-                        "description": "Expense category inferred from the user message.",
-                    },
-                    "day": {
-                        "type": "integer",
-                        "description": "Day of month. Defaults to today's Rosario day.",
-                    },
-                    "month": {
-                        "type": "string",
-                        "enum": MONTH_SHEET_NAMES,
-                        "description": "Spanish lowercase month sheet name.",
-                    },
-                    "refund": {
-                        "type": "boolean",
-                        "description": "True for refund/negative adjustments.",
-                    },
-                },
-                "required": ["amount", "category"],
-            },
-        )
 
     def add_non_credit_expense(self, args: dict[str, Any]) -> dict[str, Any]:
         try:

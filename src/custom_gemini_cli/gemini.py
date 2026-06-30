@@ -47,6 +47,26 @@ def generate_content_with_tools(
     )
 
 
+def generate_grounded_content(
+    client: genai.Client,
+    model: str,
+    contents: Any,
+    system_instruction: str,
+) -> Any:
+    return client.models.generate_content(
+        model=model,
+        contents=contents,
+        config=types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            tools=[
+                types.Tool(
+                    google_search=types.GoogleSearch(),
+                )
+            ],
+        ),
+    )
+
+
 def extract_response_text(response: Any) -> str:
     candidates = _get(response, "candidates") or []
     if not candidates:

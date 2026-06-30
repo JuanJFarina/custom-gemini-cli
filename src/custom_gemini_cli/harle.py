@@ -5,18 +5,24 @@ from pathlib import Path
 from typing import Any
 
 from google.genai import types
+from pydantic import ValidationError
 
 from custom_gemini_cli.config import DEFAULT_MODEL
 from custom_gemini_cli.gemini import (
     create_client,
-    extract_function_calls,
     extract_response_text,
-    generate_content_with_tools,
-    get_first_candidate_content,
+    generate_grounded_content,
     is_unavailable_model_error,
 )
 from custom_gemini_cli.memory import PERSONAL_HISTORY_PATH
 from custom_gemini_cli.prompts.system import SYSTEM_PROMPT
+from custom_gemini_cli.reasoning import (
+    HarleReasoning,
+    json_repair_prompt,
+    parse_harle_reasoning,
+    reasoning_protocol_text,
+    tool_result_prompt,
+)
 from custom_gemini_cli.runtime_context import (
     get_current_time_and_date,
     get_current_weather,
@@ -32,6 +38,7 @@ class Harle:
     conversation_store: ConversationStore
     expense_tool: ExpenseTool | None = None
     max_tool_depth: int = 3
+    max_json_repair_attempts: int = 2
     last_response: Any | None = field(default=None, init=False)
     effective_model: str = field(default="", init=False)
     _tool_was_called: bool = field(default=False, init=False)
@@ -93,51 +100,123 @@ class Harle:
                 parts=[types.Part.from_text(text=prompt)],
             )
         ]
-        response = generate_content_with_tools(
+        response = generate_grounded_content(
             client=client,
             model=model,
             contents=conversation,
             system_instruction=system_instruction,
-            tools=self._gemini_tools(),
         )
         self.last_response = response
 
-        function_calls = extract_function_calls(response)
-        if not function_calls:
-            return extract_response_text(response)
+        response_text = extract_response_text(response)
+        if self.expense_tool is None:
+            return response_text
+
+        reasoning = self._parse_or_repair_reasoning(
+            client=client,
+            model=model,
+            system_instruction=system_instruction,
+            original_prompt=prompt,
+            response_text=response_text,
+        )
+        if reasoning.action == "respond":
+            return reasoning.response or ""
 
         if depth >= self.max_tool_depth:
             return "I could not complete the request because the tool loop reached its limit."
 
-        function_call = function_calls[0]
-        tool_result = self._execute_function_call(function_call)
+        tool_result = self._execute_reasoning_tool(reasoning)
         self._tool_was_called = True
 
-        model_content = get_first_candidate_content(response)
-        if model_content is None:
-            return "I could not complete the request because Gemini returned an invalid tool call."
-
-        conversation = [
-            *conversation,
-            model_content,
-            types.Content(
-                role="tool",
-                parts=[
-                    types.Part.from_function_response(
-                        name=_get_function_call_name(function_call),
-                        response=tool_result,
-                    )
-                ],
-            ),
-        ]
         return self.reason(
             prompt=prompt,
             client=client,
             model=model,
             system_instruction=system_instruction,
-            contents=conversation,
+            contents=[
+                *conversation,
+                types.Content(
+                    role="model",
+                    parts=[types.Part.from_text(text=response_text)],
+                ),
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_text(
+                            text=tool_result_prompt(
+                                original_prompt=prompt,
+                                tool_result=tool_result,
+                            )
+                        )
+                    ],
+                ),
+            ],
             depth=depth + 1,
         )
+
+    def _parse_or_repair_reasoning(
+        self,
+        *,
+        client: Any,
+        model: str,
+        system_instruction: str,
+        original_prompt: str,
+        response_text: str,
+    ) -> HarleReasoning:
+        try:
+            return parse_harle_reasoning(response_text)
+        except (ValidationError, ValueError) as exc:
+            last_error = str(exc)
+
+        for _ in range(self.max_json_repair_attempts):
+            repair_response = generate_grounded_content(
+                client=client,
+                model=model,
+                contents=[
+                    types.Content(
+                        role="user",
+                        parts=[types.Part.from_text(text=original_prompt)],
+                    ),
+                    types.Content(
+                        role="model",
+                        parts=[types.Part.from_text(text=response_text)],
+                    ),
+                    types.Content(
+                        role="user",
+                        parts=[
+                            types.Part.from_text(
+                                text=json_repair_prompt(
+                                    invalid_response=response_text,
+                                    error=last_error,
+                                )
+                            )
+                        ],
+                    ),
+                ],
+                system_instruction=system_instruction,
+            )
+            self.last_response = repair_response
+            response_text = extract_response_text(repair_response)
+            try:
+                return parse_harle_reasoning(response_text)
+            except (ValidationError, ValueError) as exc:
+                last_error = str(exc)
+
+        return HarleReasoning(
+            action="respond",
+            response=(
+                "I could not parse my internal JSON response. Please try again."
+            ),
+        )
+
+    def _execute_reasoning_tool(self, reasoning: HarleReasoning) -> dict[str, Any]:
+        if reasoning.tool_name == "add_non_credit_expense" and reasoning.tool_args:
+            return self._update_expenses_tool(reasoning.tool_args.model_dump())
+
+        return {
+            "ok": False,
+            "error": f"Unknown or incomplete tool request: {reasoning.tool_name}",
+        }
 
     def _update_expenses_tool(self, args: dict[str, Any]) -> dict[str, Any]:
         if self.expense_tool is None:
@@ -151,37 +230,22 @@ class Harle:
         return self.conversation_store.load_conversations()
 
     def _build_system_instruction(self, latest_conversations: str) -> str:
-        return SYSTEM_PROMPT.format(
+        system_instruction = SYSTEM_PROMPT.format(
             current_time_and_date=get_current_time_and_date(),
             current_weather=get_current_weather(),
             juan_personal_history_summary=_load_personal_history(PERSONAL_HISTORY_PATH),
             latest_conversations=latest_conversations,
         )
+        if self.expense_tool is not None:
+            system_instruction = f"{system_instruction}\n\n{reasoning_protocol_text()}"
+        return system_instruction
 
     def _gemini_tools(self) -> list[types.Tool]:
-        tools = [
+        return [
             types.Tool(
                 google_search=types.GoogleSearch(),
             )
         ]
-        if self.expense_tool is not None:
-            tools.append(
-                types.Tool(
-                    function_declarations=[self.expense_tool.declaration],
-                )
-            )
-        return tools
-
-    def _execute_function_call(self, function_call: Any) -> dict[str, Any]:
-        name = _get_function_call_name(function_call)
-        args = _get_function_call_args(function_call)
-        if name == "add_non_credit_expense":
-            return self._update_expenses_tool(args)
-
-        return {
-            "ok": False,
-            "error": f"Unknown tool: {name}",
-        }
 
 
 def _load_personal_history(path: Path) -> str:
@@ -191,12 +255,4 @@ def _load_personal_history(path: Path) -> str:
     content = path.read_text(encoding="utf-8").strip()
     return content or "No personal history has been recorded yet."
 
-
-def _get_function_call_name(function_call: Any) -> str:
-    return str(getattr(function_call, "name", "") or "")
-
-
-def _get_function_call_args(function_call: Any) -> dict[str, Any]:
-    args = getattr(function_call, "args", None) or {}
-    return dict(args)
 
