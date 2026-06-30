@@ -20,3 +20,6 @@ gemini = "custom_gemini_cli.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.vercel]
+entrypoint = "src.custom_gemini_bot.app:app"
