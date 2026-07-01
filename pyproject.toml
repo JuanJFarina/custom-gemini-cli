@@ -25,4 +25,4 @@ gemini = "harle_cli.cli:main"
 where = ["src"]
 
 [tool.vercel]
-entrypoint = "src/harle_api/app.py"
+entrypoint = "src.harle_api.app:app"
