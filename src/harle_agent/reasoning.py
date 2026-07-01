@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import json
-import re
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from harle_agent.tools.expenses import (
     CATEGORY_COLUMNS,
@@ -13,60 +11,16 @@ from harle_agent.tools.expenses import (
 )
 
 
-ExpenseCategory = Literal[
-    "alquileres",
-    "servicios_esenciales",
-    "servicios_no_esenciales",
-    "hogar",
-    "transporte",
-    "salidas",
-    "shopping",
-    "otros",
-]
-
-ExpenseMonth = Literal[
-    "enero",
-    "febrero",
-    "marzo",
-    "abril",
-    "mayo",
-    "junio",
-    "julio",
-    "agosto",
-    "septiembre",
-    "octubre",
-    "noviembre",
-    "diciembre",
-]
-
-
-class AddExpenseArgs(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    amount: int
-    category: ExpenseCategory
-    day: int | None = None
-    month: ExpenseMonth | None = None
-    refund: bool = False
-
-    @field_validator("amount")
-    @classmethod
-    def validate_amount(cls, amount: int) -> int:
-        if amount <= 0:
-            raise ValueError("amount must be a positive integer.")
-        return amount
-
-
-class HarleReasoning(BaseModel):
+class HarleThought(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     action: Literal["respond", "call_tool"]
     tool_name: Literal["add_non_credit_expense"] | None = None
-    tool_args: AddExpenseArgs | None = None
+    tool_args: dict[str, Any] | None = None
     response: str | None = None
 
     @model_validator(mode="after")
-    def validate_action_payload(self) -> HarleReasoning:
+    def validate_action_payload(self) -> HarleThought:
         if self.action == "respond":
             if not self.response or not self.response.strip():
                 raise ValueError("response is required when action is respond.")
@@ -79,10 +33,6 @@ class HarleReasoning(BaseModel):
         if self.response is not None:
             raise ValueError("response must be empty when action is call_tool.")
         return self
-
-
-def parse_harle_reasoning(text: str) -> HarleReasoning:
-    return HarleReasoning.model_validate_json(_extract_json_object(text))
 
 
 def reasoning_protocol_text() -> str:
@@ -126,45 +76,3 @@ Tool rules:
 Category inference guidance:
 {CATEGORY_GUIDANCE}
 """
-
-
-def json_repair_prompt(*, invalid_response: str, error: str) -> str:
-    return f"""
-Your previous response did not match the required JSON protocol.
-
-Validation error:
-{error}
-
-Previous response:
-{invalid_response}
-
-Return exactly one valid JSON object and nothing else. Use either:
-{{"action":"respond","response":"..."}}
-or:
-{{"action":"call_tool","tool_name":"add_non_credit_expense","tool_args":{{"amount":100,"category":"hogar","day":null,"month":null,"refund":false}}}}
-"""
-
-
-def tool_result_prompt(*, original_prompt: str, tool_result: dict[str, object]) -> str:
-    return f"""
-Original user message:
-{original_prompt}
-
-The local Python tool was executed and returned this result:
-{json.dumps(tool_result, ensure_ascii=False)}
-
-Now respond naturally to Juan using the JSON response protocol. Do not call the tool again unless another tool call is truly required.
-"""
-
-
-def _extract_json_object(text: str) -> str:
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        stripped = re.sub(r"^```(?:json)?\s*", "", stripped, flags=re.IGNORECASE)
-        stripped = re.sub(r"\s*```$", "", stripped)
-
-    start = stripped.find("{")
-    end = stripped.rfind("}")
-    if start == -1 or end == -1 or end < start:
-        return stripped
-    return stripped[start : end + 1]

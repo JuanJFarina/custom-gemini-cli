@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Protocol, runtime_checkable
+
+MAX_CONVERSATION_TOKENS = 4000
 
 
+@runtime_checkable
 class ConversationStore(Protocol):
-    def load_conversations(self) -> str:
-        """Return conversation context ready to inject into the system prompt."""
+    async def load(self, *, max_tokens: int = MAX_CONVERSATION_TOKENS) -> str:
+        """Return conversation context ready to inject into the system prompt.
+        The context is limited to max_tokens tokens."""
 
-    def save_conversation(self, *, prompt: str, response_text: str, model: str) -> None:
+    async def save(self, *, prompt: str, response_text: str, model: str) -> None:
         """Persist the final user prompt and assistant response."""

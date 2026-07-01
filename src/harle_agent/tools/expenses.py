@@ -11,6 +11,7 @@ from harle_agent.tools.google_sheets import (
     GoogleSheetsClient,
     load_google_sheets_settings_from_env,
 )
+from harle_agent.models.harle_models import HarleTool
 
 
 MONTH_SHEET_NAMES = [
@@ -67,7 +68,7 @@ class ExpenseTool:
     def __init__(self, sheets_client: GoogleSheetsClient) -> None:
         self.sheets_client = sheets_client
 
-    def add_non_credit_expense(self, args: dict[str, Any]) -> dict[str, Any]:
+    async def add_non_credit_expense(self, args: dict[str, Any]) -> dict[str, Any]:
         try:
             parsed_args = _parse_args(args)
             month = _resolve_month(parsed_args.month)
@@ -75,13 +76,16 @@ class ExpenseTool:
             category = _resolve_category(parsed_args.category)
             cell = _cell_for(day=day, category=category)
 
-            old_formula = self.sheets_client.get_formula(sheet_name=month, cell=cell)
+            old_formula = await self.sheets_client.get_formula(
+                sheet_name=month,
+                cell=cell,
+            )
             new_formula = build_updated_formula(
                 old_formula=old_formula,
                 amount=parsed_args.amount,
                 refund=parsed_args.refund,
             )
-            self.sheets_client.update_formula(
+            await self.sheets_client.update_formula(
                 sheet_name=month,
                 cell=cell,
                 formula=new_formula,
@@ -104,11 +108,15 @@ class ExpenseTool:
         }
 
 
-def build_expense_tool_from_env() -> ExpenseTool | None:
+def build_expense_tool_from_env() -> HarleTool | None:
     settings = load_google_sheets_settings_from_env()
     if settings is None:
         return None
-    return ExpenseTool(GoogleSheetsClient(settings))
+    expense_tool = ExpenseTool(GoogleSheetsClient(settings))
+    return HarleTool(
+        tool_name="add_non_credit_expense",
+        tool_func=expense_tool.add_non_credit_expense,
+    )
 
 
 def build_updated_formula(*, old_formula: str, amount: int, refund: bool) -> str:

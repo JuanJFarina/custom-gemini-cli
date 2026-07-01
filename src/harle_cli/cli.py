@@ -2,14 +2,21 @@ from __future__ import annotations
 
 from argparse import ArgumentParser, Namespace
 from sys import stderr
+import asyncio
 
 from harle_agent import __version__
 from harle_agent.agent import Harle
+from harle_agent.models.harle_models import HarleConfig, HarleStores, HarleToolStore
 from harle_agent.config import DEFAULT_MODEL
 from harle_agent.stores.file_store import FileConversationStore
-from harle_agent.tools.expenses import build_expense_tool_from_env
 from harle_cli.config import get_api_key, get_model, load_dotenv
-from harle_cli.grounding import print_sources
+
+
+async def call_harle(harle: Harle, prompt: str) -> None:
+    response_text, saving_task = await harle.call(prompt)
+    if response_text:
+        print(f"\nGemini: {response_text}\n")
+    await saving_task
 
 
 def main() -> int:
@@ -26,30 +33,24 @@ def main() -> int:
         return 2
 
     model = get_model(args.model)
-    harle = Harle(
+    harle_config = HarleConfig(
         model=model,
         api_key=api_key,
+    )
+    harle_stores = HarleStores(
         conversation_store=FileConversationStore(),
-        expense_tool=build_expense_tool_from_env(),
+        tool_store=HarleToolStore(),
+    )
+    harle = Harle(
+        config=harle_config,
+        stores=harle_stores,
     )
 
     try:
-        response_text = harle.respond(prompt)
+        asyncio.run(call_harle(harle, prompt))
     except Exception as exc:
         print(f"Gemini request failed: {exc}", file=stderr)
         return 1
-
-    if harle.effective_model != model and harle.effective_model == DEFAULT_MODEL:
-        print(
-            f"Configured model '{model}' is unavailable; retried with {DEFAULT_MODEL}.",
-            file=stderr,
-        )
-
-    if response_text:
-        print(f"\nGemini: {response_text}\n")
-
-    if args.show_sources and harle.last_response is not None:
-        print_sources(harle.last_response)
 
     return 0
 
@@ -67,11 +68,6 @@ def _parse_args() -> Namespace:
     parser.add_argument(
         "--model",
         help=f"Gemini model to use. Defaults to GEMINI_MODEL or {DEFAULT_MODEL}.",
-    )
-    parser.add_argument(
-        "--show-sources",
-        action="store_true",
-        help="Print source URLs from grounding metadata when available.",
     )
     parser.add_argument(
         "--version",

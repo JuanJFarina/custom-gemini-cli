@@ -1,20 +1,22 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
 
-from harle_agent.memory import (
-    CONVERSATION_CONTEXT_CHAR_LIMIT,
-    CONVERSATIONS_DIR,
-)
+from harle_agent.memory import CONVERSATIONS_DIR
+from .protocol import MAX_CONVERSATION_TOKENS
 
 
 class FileConversationStore:
     def __init__(self, conversations_dir: Path = CONVERSATIONS_DIR) -> None:
         self.conversations_dir = conversations_dir
 
-    def load_conversations(self) -> str:
+    async def load(self, *, max_tokens: int = MAX_CONVERSATION_TOKENS) -> str:
+        return await asyncio.to_thread(self._load_sync, max_tokens=max_tokens)
+
+    def _load_sync(self, *, max_tokens: int = MAX_CONVERSATION_TOKENS) -> str:
         if not self.conversations_dir.is_dir():
             return "No previous conversations yet."
 
@@ -31,7 +33,7 @@ class FileConversationStore:
 
             separator_length = 1 if conversations else 0
             next_context_length = context_length + separator_length + len(conversation)
-            if next_context_length > CONVERSATION_CONTEXT_CHAR_LIMIT:
+            if (next_context_length / 4) > max_tokens:
                 break
 
             conversations.append(conversation)
@@ -42,11 +44,21 @@ class FileConversationStore:
 
         return "\n".join(reversed(conversations))
 
-    def save_conversation(self, *, prompt: str, response_text: str, model: str) -> None:
+    async def save(self, *, prompt: str, response_text: str, model: str) -> None:
+        await asyncio.to_thread(
+            self._save_sync,
+            prompt=prompt,
+            response_text=response_text,
+            model=model,
+        )
+
+    def _save_sync(self, *, prompt: str, response_text: str, model: str) -> None:
         self.conversations_dir.mkdir(parents=True, exist_ok=True)
         path = self._new_conversation_path()
         path.write_text(
-            _format_conversation(prompt=prompt, response_text=response_text, model=model),
+            _format_conversation(
+                prompt=prompt, response_text=response_text, model=model
+            ),
             encoding="utf-8",
         )
 

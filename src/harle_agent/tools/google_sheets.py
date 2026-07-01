@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import os
@@ -38,7 +39,14 @@ class GoogleSheetsClient:
         )
         return gspread.authorize(credentials).open_by_key(self._settings.spreadsheet_id)
 
-    def get_formula(self, *, sheet_name: str, cell: str) -> str:
+    async def get_formula(self, *, sheet_name: str, cell: str) -> str:
+        return await asyncio.to_thread(
+            self._get_formula_sync,
+            sheet_name=sheet_name,
+            cell=cell,
+        )
+
+    def _get_formula_sync(self, *, sheet_name: str, cell: str) -> str:
         worksheet = self.spreadsheet.worksheet(sheet_name)
         value = worksheet.acell(
             cell,
@@ -46,7 +54,15 @@ class GoogleSheetsClient:
         ).value
         return str(value or "")
 
-    def update_formula(self, *, sheet_name: str, cell: str, formula: str) -> None:
+    async def update_formula(self, *, sheet_name: str, cell: str, formula: str) -> None:
+        await asyncio.to_thread(
+            self._update_formula_sync,
+            sheet_name=sheet_name,
+            cell=cell,
+            formula=formula,
+        )
+
+    def _update_formula_sync(self, *, sheet_name: str, cell: str, formula: str) -> None:
         worksheet = self.spreadsheet.worksheet(sheet_name)
         worksheet.update(
             [[formula]],

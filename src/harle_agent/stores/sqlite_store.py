@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from .protocol import MAX_CONVERSATION_TOKENS
 
-
-CONVERSATION_CONTEXT_CHAR_LIMIT = 4000
 NO_CONVERSATIONS_MESSAGE = "No conversations yet"
 
 
@@ -27,10 +28,13 @@ class SQLiteConversationStore:
         self.chat_id = chat_id
         self.user_id = user_id
 
-    def load_conversations(self) -> str:
+    async def load(self, *, max_tokens: int = MAX_CONVERSATION_TOKENS) -> str:
+        return await asyncio.to_thread(self._load_sync, max_tokens=max_tokens)
+
+    def _load_sync(self, *, max_tokens: int = MAX_CONVERSATION_TOKENS) -> str:
         self._ensure_schema()
 
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             rows = connection.execute(
                 """
                 SELECT telegram_chat_id, telegram_user_id, prompt, response, model, created_at
@@ -51,7 +55,7 @@ class SQLiteConversationStore:
             conversation = _format_conversation_for_context(_record_from_row(row))
             separator_length = 1 if conversations else 0
             next_context_length = context_length + separator_length + len(conversation)
-            if next_context_length > CONVERSATION_CONTEXT_CHAR_LIMIT:
+            if (next_context_length / 4) > max_tokens:
                 break
 
             conversations.append(conversation)
@@ -62,56 +66,66 @@ class SQLiteConversationStore:
 
         return "\n".join(reversed(conversations))
 
-    def save_conversation(self, *, prompt: str, response_text: str, model: str) -> None:
+    async def save(self, *, prompt: str, response_text: str, model: str) -> None:
+        await asyncio.to_thread(
+            self._save_sync,
+            prompt=prompt,
+            response_text=response_text,
+            model=model,
+        )
+
+    def _save_sync(self, *, prompt: str, response_text: str, model: str) -> None:
         self._ensure_schema()
         created_at = datetime.now(UTC).isoformat(timespec="seconds")
 
-        with self._connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO conversations (
-                    telegram_chat_id,
-                    telegram_user_id,
-                    prompt,
-                    response,
-                    model,
-                    created_at
+        with closing(self._connect()) as connection:
+            with connection:
+                connection.execute(
+                    """
+                    INSERT INTO conversations (
+                        telegram_chat_id,
+                        telegram_user_id,
+                        prompt,
+                        response,
+                        model,
+                        created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        self.chat_id,
+                        self.user_id,
+                        prompt,
+                        response_text,
+                        model,
+                        created_at,
+                    ),
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    self.chat_id,
-                    self.user_id,
-                    prompt,
-                    response_text,
-                    model,
-                    created_at,
-                ),
-            )
 
     def _ensure_schema(self) -> None:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with self._connect() as connection:
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS conversations (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    telegram_chat_id INTEGER NOT NULL,
-                    telegram_user_id INTEGER NOT NULL,
-                    prompt TEXT NOT NULL,
-                    response TEXT NOT NULL,
-                    model TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+        with closing(self._connect()) as connection:
+            with connection:
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS conversations (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        telegram_chat_id INTEGER NOT NULL,
+                        telegram_user_id INTEGER NOT NULL,
+                        prompt TEXT NOT NULL,
+                        response TEXT NOT NULL,
+                        model TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    )
+                    """
                 )
-                """
-            )
-            connection.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_conversations_chat_user_created_at
-                ON conversations (telegram_chat_id, telegram_user_id, created_at)
-                """
-            )
+                connection.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_conversations_chat_user_created_at
+                    ON conversations (telegram_chat_id, telegram_user_id, created_at)
+                    """
+                )
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.database_path)

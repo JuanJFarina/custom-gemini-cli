@@ -1,233 +1,178 @@
-from __future__ import annotations
-
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
-
-from google.genai import types
-from pydantic import ValidationError
-
-from harle_agent.config import DEFAULT_MODEL
-from harle_agent.llm_client import (
-    create_client,
-    extract_response_text,
-    generate_grounded_content,
-    is_unavailable_model_error,
+from typing import Any, Awaitable, Callable
+import re
+from google.genai.types import (
+    Tool,
+    GenerateContentResponse,
+    GenerateContentConfig,
+    GoogleSearch,
 )
-from harle_agent.memory import PERSONAL_HISTORY_PATH
-from harle_agent.prompts.system import SYSTEM_PROMPT
-from harle_agent.reasoning import (
-    HarleReasoning,
-    json_repair_prompt,
-    parse_harle_reasoning,
+from functools import wraps
+from asyncio import create_task, Task
+from .memory import PERSONAL_HISTORY_PATH
+from .prompts.system import SYSTEM_PROMPT
+from .reasoning import (
+    HarleThought,
     reasoning_protocol_text,
-    tool_result_prompt,
 )
-from harle_agent.runtime_context import (
+from .runtime_context import (
     get_current_time_and_date,
     get_current_weather,
 )
-from harle_agent.stores.protocol import ConversationStore
-from harle_agent.tools.expenses import ExpenseTool
+from pydantic import BaseModel, ConfigDict
+from google.genai import Client
+from .models.harle_models import HarleConfig, HarleStores, HarleToolResult
+from .tools.expenses import build_expense_tool_from_env
+
+MAX_ATTEMPTS = 3
+MAX_TOOL_DEPTH = 3
 
 
-@dataclass
-class Harle:
-    model: str
-    api_key: str
-    conversation_store: ConversationStore
-    expense_tool: ExpenseTool | None = None
-    max_tool_depth: int = 3
-    max_json_repair_attempts: int = 2
-    last_response: Any | None = field(default=None, init=False)
-    effective_model: str = field(default="", init=False)
-    _tool_was_called: bool = field(default=False, init=False)
-
-    def respond(self, message: str) -> str:
-        history = self._load_conversations()
-        system_instruction = self._build_system_instruction(history)
-        client = create_client(api_key=self.api_key)
-        self._tool_was_called = False
-        self.effective_model = self.model
-
-        try:
-            response_text = self.reason(
-                prompt=message,
-                client=client,
-                model=self.model,
-                system_instruction=system_instruction,
+def retry(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+    @wraps(func)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        attempts = 0
+        while attempts < MAX_ATTEMPTS:
+            try:
+                return await func(*args, **kwargs)
+            except Exception:
+                attempts += 1
+        if func.__name__ == "_call_gemini":
+            return HarleThought(
+                action="respond",
+                response="I couldn't think a response because my AI model is nor responding, sorry !",
             )
-        except Exception as exc:
-            if (
-                self.model != DEFAULT_MODEL
-                and not self._tool_was_called
-                and is_unavailable_model_error(exc)
-            ):
-                response_text = self.reason(
-                    prompt=message,
-                    client=client,
-                    model=DEFAULT_MODEL,
-                    system_instruction=system_instruction,
-                )
-                self.effective_model = DEFAULT_MODEL
-            else:
-                raise
-        finally:
-            close = getattr(client, "close", None)
-            if callable(close):
-                close()
+        elif func.__name__ == "_call_tool":
+            return HarleToolResult(
+                tool_name="Tool name not available when creating this error message.",
+                result={
+                    "error": f"Tool can't be called, even after {MAX_ATTEMPTS} attempts. Don't retry."
+                },
+            )
+        raise RuntimeError(f"{func.__name__} failed after {MAX_ATTEMPTS} attempts.")
 
-        self.conversation_store.save_conversation(
-            prompt=message,
-            response_text=response_text,
-            model=self.effective_model or self.model,
+    return wrapper
+
+
+class Harle(BaseModel):
+    config: HarleConfig
+    stores: HarleStores
+
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
+
+    def model_post_init(self, context: Any, /) -> None:
+        self._client: Client = Client(api_key=self.config.api_key)
+        if expense_tool := build_expense_tool_from_env():
+            self.stores.tool_store.tools.append(expense_tool)
+
+    async def call(self, prompt: str) -> tuple[str, Task[None]]:
+        conversations = await self.stores.conversation_store.load()
+        system_instruction = self._build_system_instruction(conversations)
+        response: str = await self.reason_and_act(
+            prompt=prompt,
+            system_instruction=system_instruction,
         )
-        return response_text
+        task = self._save_conversation(prompt=prompt, response_text=response)
+        return response, task
 
-    def reason(
+    async def reason_and_act(
         self,
         prompt: str,
-        *,
-        client: Any,
-        model: str,
         system_instruction: str,
-        contents: list[types.Content] | None = None,
         depth: int = 0,
     ) -> str:
-        conversation = contents or [
-            types.Content(
-                role="user",
-                parts=[types.Part.from_text(text=prompt)],
+        harle_thought = await self._call_gemini(
+            system_instruction=system_instruction, prompt=prompt
+        )
+
+        if harle_thought.action == "respond":
+            return harle_thought.response or ""
+
+        if harle_thought.action == "call_tool":
+            if depth >= MAX_TOOL_DEPTH:
+                return "I could not complete the request because the tool loop reached its limit."
+
+            tool_result = await self._call_tool(harle_thought)
+            prompt = self._update_prompt(prompt=prompt, tool_result=tool_result)
+            return await self.reason_and_act(
+                prompt=prompt,
+                system_instruction=system_instruction,
+                depth=depth + 1,
             )
-        ]
-        response = generate_grounded_content(
-            client=client,
-            model=model,
-            contents=conversation,
-            system_instruction=system_instruction,
-        )
-        self.last_response = response
+        return ""
 
-        response_text = extract_response_text(response)
-        if self.expense_tool is None:
-            return response_text
-
-        reasoning = self._parse_or_repair_reasoning(
-            client=client,
-            model=model,
-            system_instruction=system_instruction,
-            original_prompt=prompt,
-            response_text=response_text,
-        )
-        if reasoning.action == "respond":
-            return reasoning.response or ""
-
-        if depth >= self.max_tool_depth:
-            return "I could not complete the request because the tool loop reached its limit."
-
-        tool_result = self._execute_reasoning_tool(reasoning)
-        self._tool_was_called = True
-
-        return self.reason(
-            prompt=prompt,
-            client=client,
-            model=model,
-            system_instruction=system_instruction,
-            contents=[
-                *conversation,
-                types.Content(
-                    role="model",
-                    parts=[types.Part.from_text(text=response_text)],
-                ),
-                types.Content(
-                    role="user",
-                    parts=[
-                        types.Part.from_text(
-                            text=tool_result_prompt(
-                                original_prompt=prompt,
-                                tool_result=tool_result,
-                            )
+    @retry
+    async def _call_gemini(self, system_instruction: str, prompt: str) -> HarleThought:
+        gemini_response: GenerateContentResponse = (
+            await self._client.aio.models.generate_content(
+                model=self.config.model,
+                contents=prompt,
+                config=GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    tools=[
+                        Tool(
+                            google_search=GoogleSearch(),
                         )
                     ],
                 ),
-            ],
-            depth=depth + 1,
-        )
-
-    def _parse_or_repair_reasoning(
-        self,
-        *,
-        client: Any,
-        model: str,
-        system_instruction: str,
-        original_prompt: str,
-        response_text: str,
-    ) -> HarleReasoning:
-        try:
-            return parse_harle_reasoning(response_text)
-        except (ValidationError, ValueError) as exc:
-            last_error = str(exc)
-
-        for _ in range(self.max_json_repair_attempts):
-            repair_response = generate_grounded_content(
-                client=client,
-                model=model,
-                contents=[
-                    types.Content(
-                        role="user",
-                        parts=[types.Part.from_text(text=original_prompt)],
-                    ),
-                    types.Content(
-                        role="model",
-                        parts=[types.Part.from_text(text=response_text)],
-                    ),
-                    types.Content(
-                        role="user",
-                        parts=[
-                            types.Part.from_text(
-                                text=json_repair_prompt(
-                                    invalid_response=response_text,
-                                    error=last_error,
-                                )
-                            )
-                        ],
-                    ),
-                ],
-                system_instruction=system_instruction,
             )
-            self.last_response = repair_response
-            response_text = extract_response_text(repair_response)
-            try:
-                return parse_harle_reasoning(response_text)
-            except (ValidationError, ValueError) as exc:
-                last_error = str(exc)
+        )
+        if not gemini_response.candidates:
+            return HarleThought(
+                action="respond",
+                response="Sorry, could you repeat ?",
+            )
 
-        return HarleReasoning(
-            action="respond",
-            response=(
-                "I could not parse my internal JSON response. Please try again."
-            ),
+        content = gemini_response.candidates[0].content
+        parts = content.parts or []
+        text_parts: list[str] = []
+
+        for part in parts:
+            if part.thought:
+                continue
+
+            text = part.text
+            if text and text.strip():
+                text_parts.append(text.strip())
+
+        response_text = self._extract_json_object(text_parts[-1])
+        return HarleThought.model_validate_json(response_text)
+
+    def _save_conversation(self, prompt: str, response_text: str) -> Task[None]:
+        return create_task(
+            self.stores.conversation_store.save(
+                prompt=prompt,
+                response_text=response_text,
+                model=self.config.model,
+            )
         )
 
-    def _execute_reasoning_tool(self, reasoning: HarleReasoning) -> dict[str, Any]:
-        if reasoning.tool_name == "add_non_credit_expense" and reasoning.tool_args:
-            return self._update_expenses_tool(reasoning.tool_args.model_dump())
+    @retry
+    async def _call_tool(self, reasoning: HarleThought) -> HarleToolResult:
+        tool = self.stores.tool_store.get(reasoning.tool_name)
+        result = await tool.tool_func(reasoning.tool_args)
+        return HarleToolResult(tool_name=tool.tool_name, result=result)
 
-        return {
-            "ok": False,
-            "error": f"Unknown or incomplete tool request: {reasoning.tool_name}",
-        }
+    def _extract_json_object(self, text: str) -> str:
+        stripped = text.strip()
+        if stripped.startswith("```"):
+            stripped = re.sub(r"^```(?:json)?\s*", "", stripped, flags=re.IGNORECASE)
+            stripped = re.sub(r"\s*```$", "", stripped)
 
-    def _update_expenses_tool(self, args: dict[str, Any]) -> dict[str, Any]:
-        if self.expense_tool is None:
-            return {
-                "ok": False,
-                "error": "Expense tool is not configured.",
-            }
-        return self.expense_tool.add_non_credit_expense(args)
+        start = stripped.find("{")
+        end = stripped.rfind("}")
+        if start == -1 or end == -1 or end < start:
+            return stripped
+        return stripped[start : end + 1]
 
-    def _load_conversations(self) -> str:
-        return self.conversation_store.load_conversations()
+    def _update_prompt(self, prompt: str, tool_result: HarleToolResult) -> str:
+        return f"""
+            Original user message:
+            {prompt}
+
+            After it, you called the tool {tool_result.tool_name}. This is the result:
+            {tool_result.result}
+            """
 
     def _build_system_instruction(self, latest_conversations: str) -> str:
         system_instruction = SYSTEM_PROMPT.format(
@@ -236,16 +181,8 @@ class Harle:
             juan_personal_history_summary=_load_personal_history(PERSONAL_HISTORY_PATH),
             latest_conversations=latest_conversations,
         )
-        if self.expense_tool is not None:
-            system_instruction = f"{system_instruction}\n\n{reasoning_protocol_text()}"
+        system_instruction = f"{system_instruction}\n\n{reasoning_protocol_text()}"
         return system_instruction
-
-    def _gemini_tools(self) -> list[types.Tool]:
-        return [
-            types.Tool(
-                google_search=types.GoogleSearch(),
-            )
-        ]
 
 
 def _load_personal_history(path: Path) -> str:

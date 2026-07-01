@@ -41,12 +41,6 @@ Use another model:
 gemini --model gemini-2.5-pro "summarize today's AI news"
 ```
 
-Show grounding source URLs when Gemini returns them:
-
-```powershell
-gemini --show-sources "what is the current trend in AI ?"
-```
-
 ## Expense updates
 
 The assistant can update Juan's Google Sheets expense tracker when Google Sheets credentials are configured. This works from both the CLI and Telegram bot because both entry points use the same assistant engine.
