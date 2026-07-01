@@ -1,5 +1,8 @@
-from pydantic import BaseModel, Field, ConfigDict
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
 from harle_agent.stores.protocol import ConversationStore
 
 

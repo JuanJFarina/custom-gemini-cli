@@ -10,7 +10,6 @@ from harle_api.assistant import process_telegram_message
 from harle_api.settings import get_settings
 from harle_api.telegram import extract_text_message, is_allowed_user
 
-
 app = FastAPI(
     title="Custom Gemini Telegram Bot",
     description="Telegram webhook for the custom Gemini assistant.",

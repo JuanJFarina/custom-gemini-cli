@@ -5,8 +5,10 @@ import json
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
+
 from .protocol import MAX_CONVERSATION_TOKENS
 
 NO_CONVERSATIONS_MESSAGE = "No conversations yet"
@@ -76,7 +78,7 @@ class SQLiteConversationStore:
 
     def _save_sync(self, *, prompt: str, response_text: str, model: str) -> None:
         self._ensure_schema()
-        created_at = datetime.now(UTC).isoformat(timespec="seconds")
+        created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
         with closing(self._connect()) as connection:
             with connection:
@@ -118,13 +120,13 @@ class SQLiteConversationStore:
                         model TEXT NOT NULL,
                         created_at TEXT NOT NULL
                     )
-                    """
+                    """,
                 )
                 connection.execute(
                     """
                     CREATE INDEX IF NOT EXISTS idx_conversations_chat_user_created_at
                     ON conversations (telegram_chat_id, telegram_user_id, created_at)
-                    """
+                    """,
                 )
 
     def _connect(self) -> sqlite3.Connection:
@@ -133,8 +135,8 @@ class SQLiteConversationStore:
 
 def _record_from_row(row: sqlite3.Row | tuple[object, ...]) -> ConversationRecord:
     return ConversationRecord(
-        chat_id=int(row[0]),
-        user_id=int(row[1]),
+        chat_id=cast(int, row[0]),
+        user_id=cast(int, row[1]),
         prompt=str(row[2]),
         response=str(row[3]),
         model=str(row[4]),

@@ -6,13 +6,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from harle_agent.models.harle_models import HarleTool
 from harle_agent.runtime_context import ROSARIO_TIMEZONE
 from harle_agent.tools.google_sheets import (
     GoogleSheetsClient,
     load_google_sheets_settings_from_env,
 )
-from harle_agent.models.harle_models import HarleTool
-
 
 MONTH_SHEET_NAMES = [
     "enero",
@@ -90,7 +89,7 @@ class ExpenseTool:
                 cell=cell,
                 formula=new_formula,
             )
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             return {
                 "ok": False,
                 "error": str(exc),

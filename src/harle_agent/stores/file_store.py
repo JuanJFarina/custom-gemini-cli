@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from harle_agent.memory import CONVERSATIONS_DIR
+
 from .protocol import MAX_CONVERSATION_TOKENS
 
 
@@ -57,7 +58,9 @@ class FileConversationStore:
         path = self._new_conversation_path()
         path.write_text(
             _format_conversation(
-                prompt=prompt, response_text=response_text, model=model
+                prompt=prompt,
+                response_text=response_text,
+                model=model,
             ),
             encoding="utf-8",
         )

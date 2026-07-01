@@ -18,11 +18,72 @@ dependencies = [
     "uvicorn",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "mypy",
+    "pre-commit",
+    "pylint",
+    "ruff",
+]
+
 [project.scripts]
 gemini = "harle_cli.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+line-length = 88
+src = ["src"]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "B",
+    "E",
+    "F",
+    "I",
+    "UP",
+]
+ignore = [
+    "E501",
+]
+
+[tool.mypy]
+check_untyped_defs = true
+mypy_path = "src"
+packages = [
+    "harle_agent",
+    "harle_api",
+    "harle_cli",
+]
+python_version = "3.10"
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = [
+    "google.*",
+    "gspread.*",
+]
+ignore_missing_imports = true
+
+[tool.pylint.main]
+ignore = ["old_attempt"]
+py-version = "3.10"
+source-roots = ["src"]
+
+[tool.pylint.messages_control]
+disable = [
+    "import-error",
+    "line-too-long",
+    "missing-class-docstring",
+    "missing-function-docstring",
+    "missing-module-docstring",
+    "too-few-public-methods",
+]
+
+[tool.pylint.reports]
+fail-under = 10.0
 
 [tool.vercel]
 entrypoint = "src.harle_api.app:app"

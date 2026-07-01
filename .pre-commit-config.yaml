@@ -1,0 +1,48 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+
+  - repo: https://github.com/asottile/add-trailing-comma
+    rev: v4.0.0
+    hooks:
+      - id: add-trailing-comma
+        files: ^src/.*\.py$
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.12
+    hooks:
+      - id: ruff-format
+        files: ^src/
+      - id: ruff
+        files: ^src/
+        args:
+          - "--exit-non-zero-on-fix"
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.1.0
+    hooks:
+      - id: mypy
+        files: ^src/
+        pass_filenames: false
+        args:
+          - src
+        additional_dependencies:
+          - "."
+          - "fastapi"
+          - "httpx"
+          - "pydantic"
+
+  - repo: https://github.com/PyCQA/pylint
+    rev: v4.0.5
+    hooks:
+      - id: pylint
+        files: ^src/
+        pass_filenames: false
+        args:
+          - src
+        additional_dependencies:
+          - "."

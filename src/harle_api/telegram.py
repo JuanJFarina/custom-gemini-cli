@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 
 import httpx
-
 
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
 TELEGRAM_MESSAGE_LIMIT = 4096
@@ -90,8 +90,8 @@ def _chunk_message(text: str) -> list[str]:
     return chunks
 
 
-def _parse_int(value: object) -> int | None:
+def _parse_int(value: Any) -> int | None:
     try:
-        return int(value)  # type: ignore[arg-type]
+        return int(value)
     except (TypeError, ValueError):
         return None

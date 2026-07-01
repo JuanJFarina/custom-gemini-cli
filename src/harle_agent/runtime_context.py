@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from typing import cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import urlopen
-
 
 ROSARIO_LATITUDE = -32.9468
 ROSARIO_LONGITUDE = -60.6393
@@ -31,10 +31,10 @@ def get_current_weather() -> str:
                     "precipitation",
                     "weather_code",
                     "wind_speed_10m",
-                ]
+                ],
             ),
             "timezone": "America/Argentina/Cordoba",
-        }
+        },
     )
     url = f"https://api.open-meteo.com/v1/forecast?{query}"
 
@@ -73,7 +73,7 @@ def get_current_weather() -> str:
         _format_value("wind", wind_speed, units.get("wind_speed_10m", "km/h")),
     ]
 
-    summary = _weather_code_summary(weather_code)
+    summary = _weather_code_summary(cast(int, weather_code))
     values = ", ".join(part for part in parts if part)
     return f"{summary}; {values} in Rosario, Argentina."
 
@@ -88,8 +88,8 @@ def _format_unit(unit: str) -> str:
     return unit.replace("\N{DEGREE SIGN}C", "C")
 
 
-def _weather_code_summary(code: object) -> str:
-    descriptions = {
+def _weather_code_summary(code: int) -> str:
+    descriptions: dict[int, str] = {
         0: "clear sky",
         1: "mainly clear",
         2: "partly cloudy",

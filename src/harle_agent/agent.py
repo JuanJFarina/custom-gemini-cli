@@ -1,15 +1,21 @@
-from pathlib import Path
-from typing import Any, Awaitable, Callable
 import re
-from google.genai.types import (
-    Tool,
-    GenerateContentResponse,
-    GenerateContentConfig,
-    GoogleSearch,
-)
+from asyncio import Task, create_task
+from collections.abc import Awaitable, Callable
 from functools import wraps
-from asyncio import create_task, Task
+from pathlib import Path
+from typing import Any
+
+from google.genai import Client
+from google.genai.types import (
+    GenerateContentConfig,
+    GenerateContentResponse,
+    GoogleSearch,
+    Tool,
+)
+from pydantic import BaseModel, ConfigDict
+
 from .memory import PERSONAL_HISTORY_PATH
+from .models.harle_models import HarleConfig, HarleStores, HarleToolResult
 from .prompts.system import SYSTEM_PROMPT
 from .reasoning import (
     HarleThought,
@@ -19,9 +25,6 @@ from .runtime_context import (
     get_current_time_and_date,
     get_current_weather,
 )
-from pydantic import BaseModel, ConfigDict
-from google.genai import Client
-from .models.harle_models import HarleConfig, HarleStores, HarleToolResult
 from .tools.expenses import build_expense_tool_from_env
 
 MAX_RETRIES = 3
@@ -35,24 +38,30 @@ def retry(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
         while attempts < MAX_RETRIES:
             try:
                 return await func(*args, **kwargs)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 attempts += 1
         if func.__name__ == "_call_gemini":
             tool_results = kwargs.get("tool_results")
             if tool_results:
                 return HarleThought(
                     action="respond",
-                    response=f"I can't respond right now, but these are the results of the tool calls: {show_tool_results(tool_results)}",
+                    response=(
+                        "I can't respond right now, but these are the results of "
+                        f"the tool calls: {show_tool_results(tool_results)}"
+                    ),
                 )
             return HarleThought(
                 action="respond",
                 response="I can't respond right now, sorry !",
             )
-        elif func.__name__ == "_call_tool":
+        if func.__name__ == "_call_tool":
             return HarleToolResult(
                 tool_name="Tool name not available when creating this error message.",
                 result={
-                    "error": f"Tool can't be called, even after {MAX_RETRIES} attempts. Don't retry."
+                    "error": (
+                        f"Tool can't be called, even after {MAX_RETRIES} "
+                        "attempts. Don't retry.",
+                    ),
                 },
             )
         raise RuntimeError(f"{func.__name__} failed after {MAX_RETRIES} attempts.")
@@ -63,11 +72,12 @@ def retry(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
 class Harle(BaseModel):
     config: HarleConfig
     stores: HarleStores
+    _client: Client | None = None
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
-    def model_post_init(self, context: Any, /) -> None:
-        self._client: Client = Client(api_key=self.config.api_key)
+    def model_post_init(self, _: Any, /) -> None:
+        self._client = self._client or Client(api_key=self.config.api_key)
         if expense_tool := build_expense_tool_from_env():
             self.stores.tool_store.tools.append(expense_tool)
 
@@ -89,7 +99,10 @@ class Harle(BaseModel):
     ) -> str:
         tool_results = tool_results or []
         if len(tool_results) >= MAX_LOOPS:
-            return f"I'm looping infinitely, these are the tool results so far: {show_tool_results(tool_results)}"
+            return (
+                "I'm looping infinitely, these are the tool results so far: "
+                f"{show_tool_results(tool_results)}"
+            )
         harle_thought = await self._call_gemini(
             system_instruction=system_instruction,
             prompt=prompt,
@@ -117,6 +130,7 @@ class Harle(BaseModel):
     ) -> HarleThought:
         for result in tool_results:
             prompt = self._update_prompt(prompt=prompt, tool_result=result)
+        assert self._client
         gemini_response: GenerateContentResponse = (
             await self._client.aio.models.generate_content(
                 model=self.config.model,
@@ -126,7 +140,7 @@ class Harle(BaseModel):
                     tools=[
                         Tool(
                             google_search=GoogleSearch(),
-                        )
+                        ),
                     ],
                 ),
             )
@@ -158,12 +172,12 @@ class Harle(BaseModel):
                 prompt=prompt,
                 response_text=response_text,
                 model=self.config.model,
-            )
+            ),
         )
 
     @retry
     async def _call_tool(self, reasoning: HarleThought) -> HarleToolResult:
-        tool = self.stores.tool_store.get(reasoning.tool_name)
+        tool = self.stores.tool_store.get(reasoning.tool_name)  # type: ignore[arg-type]
         result = await tool.tool_func(reasoning.tool_args)
         return HarleToolResult(tool_name=tool.tool_name, result=result)
 
@@ -202,7 +216,7 @@ class Harle(BaseModel):
 def show_tool_results(tool_results: list[HarleToolResult]) -> str:
     if tool_results:
         return "\n".join(
-            [f"{result.tool_name}: {result.result}" for result in tool_results]
+            [f"{result.tool_name}: {result.result}" for result in tool_results],
         )
     return "No tool results yet."
 

@@ -31,7 +31,7 @@ async def process_telegram_message(
 
     try:
         response, saving_task = await _generate_response(settings, message)
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         response = f"Gemini request failed: {exc}"
 
     await send_message(

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from sys import stderr
 
-from harle_agent.config import DEFAULT_MODEL, load_dotenv
+from harle_agent.config import DEFAULT_MODEL
 
 
 def get_api_key() -> str | None:

@@ -1,15 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 from argparse import ArgumentParser, Namespace
 from sys import stderr
-import asyncio
 
 from harle_agent import __version__
 from harle_agent.agent import Harle
-from harle_agent.models.harle_models import HarleConfig, HarleStores, HarleToolStore
 from harle_agent.config import DEFAULT_MODEL
+from harle_agent.models.harle_models import HarleConfig, HarleStores, HarleToolStore
 from harle_agent.stores.file_store import FileConversationStore
-from harle_cli.config import get_api_key, get_model, load_dotenv
+from harle_cli.config import get_api_key, get_model
 
 
 async def call_harle(harle: Harle, prompt: str) -> None:
@@ -20,7 +20,6 @@ async def call_harle(harle: Harle, prompt: str) -> None:
 
 
 def main() -> int:
-    load_dotenv()
     args = _parse_args()
 
     api_key = get_api_key()
@@ -48,7 +47,7 @@ def main() -> int:
 
     try:
         asyncio.run(call_harle(harle, prompt))
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         print(f"Gemini request failed: {exc}", file=stderr)
         return 1
 

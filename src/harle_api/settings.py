@@ -6,7 +6,6 @@ from pathlib import Path
 
 from harle_agent.config import DEFAULT_MODEL, load_dotenv
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SQLITE_PATH = PROJECT_ROOT / "data" / "bot_conversations.sqlite3"
 VERCEL_SQLITE_DIR = Path("/tmp")

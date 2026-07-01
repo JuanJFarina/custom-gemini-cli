@@ -29,6 +29,23 @@ On Windows, if `gemini` is not found after installation, add your Python user sc
 $env:Path += ";$env:APPDATA\Python\Python313\Scripts"
 ```
 
+## Development
+
+This repository includes a devcontainer for a ready-to-use Linux Python environment. In Cursor or VS Code, reopen the project in the container to install the package with development tooling and set up pre-commit hooks.
+
+For local development without the container, install the dev extra and hooks:
+
+```powershell
+python -m pip install -e ".[dev]"
+pre-commit install
+```
+
+Run the full hook suite before committing:
+
+```powershell
+pre-commit run --all-files
+```
+
 ## Usage
 
 ```powershell
