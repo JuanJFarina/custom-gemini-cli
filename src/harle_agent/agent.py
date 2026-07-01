@@ -24,32 +24,38 @@ from google.genai import Client
 from .models.harle_models import HarleConfig, HarleStores, HarleToolResult
 from .tools.expenses import build_expense_tool_from_env
 
-MAX_ATTEMPTS = 3
-MAX_TOOL_DEPTH = 3
+MAX_RETRIES = 3
+MAX_LOOPS = 5
 
 
 def retry(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
     @wraps(func)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
         attempts = 0
-        while attempts < MAX_ATTEMPTS:
+        while attempts < MAX_RETRIES:
             try:
                 return await func(*args, **kwargs)
             except Exception:
                 attempts += 1
         if func.__name__ == "_call_gemini":
+            tool_results = kwargs.get("tool_results")
+            if tool_results:
+                return HarleThought(
+                    action="respond",
+                    response=f"I can't respond right now, but these are the results of the tool calls: {show_tool_results(tool_results)}",
+                )
             return HarleThought(
                 action="respond",
-                response="I couldn't think a response because my AI model is nor responding, sorry !",
+                response="I can't respond right now, sorry !",
             )
         elif func.__name__ == "_call_tool":
             return HarleToolResult(
                 tool_name="Tool name not available when creating this error message.",
                 result={
-                    "error": f"Tool can't be called, even after {MAX_ATTEMPTS} attempts. Don't retry."
+                    "error": f"Tool can't be called, even after {MAX_RETRIES} attempts. Don't retry."
                 },
             )
-        raise RuntimeError(f"{func.__name__} failed after {MAX_ATTEMPTS} attempts.")
+        raise RuntimeError(f"{func.__name__} failed after {MAX_RETRIES} attempts.")
 
     return wrapper
 
@@ -79,30 +85,38 @@ class Harle(BaseModel):
         self,
         prompt: str,
         system_instruction: str,
-        depth: int = 0,
+        tool_results: list[HarleToolResult] | None = None,
     ) -> str:
+        tool_results = tool_results or []
+        if len(tool_results) >= MAX_LOOPS:
+            return f"I'm looping infinitely, these are the tool results so far: {show_tool_results(tool_results)}"
         harle_thought = await self._call_gemini(
-            system_instruction=system_instruction, prompt=prompt
+            system_instruction=system_instruction,
+            prompt=prompt,
+            tool_results=tool_results,
         )
 
         if harle_thought.action == "respond":
             return harle_thought.response or ""
 
         if harle_thought.action == "call_tool":
-            if depth >= MAX_TOOL_DEPTH:
-                return "I could not complete the request because the tool loop reached its limit."
-
-            tool_result = await self._call_tool(harle_thought)
-            prompt = self._update_prompt(prompt=prompt, tool_result=tool_result)
+            result = await self._call_tool(harle_thought)
             return await self.reason_and_act(
                 prompt=prompt,
                 system_instruction=system_instruction,
-                depth=depth + 1,
+                tool_results=tool_results + [result],
             )
         return ""
 
     @retry
-    async def _call_gemini(self, system_instruction: str, prompt: str) -> HarleThought:
+    async def _call_gemini(
+        self,
+        system_instruction: str,
+        prompt: str,
+        tool_results: list[HarleToolResult],
+    ) -> HarleThought:
+        for result in tool_results:
+            prompt = self._update_prompt(prompt=prompt, tool_result=result)
         gemini_response: GenerateContentResponse = (
             await self._client.aio.models.generate_content(
                 model=self.config.model,
@@ -183,6 +197,14 @@ class Harle(BaseModel):
         )
         system_instruction = f"{system_instruction}\n\n{reasoning_protocol_text()}"
         return system_instruction
+
+
+def show_tool_results(tool_results: list[HarleToolResult]) -> str:
+    if tool_results:
+        return "\n".join(
+            [f"{result.tool_name}: {result.result}" for result in tool_results]
+        )
+    return "No tool results yet."
 
 
 def _load_personal_history(path: Path) -> str:
