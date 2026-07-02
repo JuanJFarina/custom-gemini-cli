@@ -1,57 +1,46 @@
-import logging as stdlib_logging
+import logging
 import os
 import sys
 from enum import Enum
 
 from dotenv import load_dotenv
+from pydantic import TypeAdapter, ValidationError
 
 LOGGER_NAME = "harle"
 LOG_FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
 
 
 class LogLevel(str, Enum):
-    DEBUG = "DEBUG"
     INFO = "INFO"
     WARNING = "WARNING"
     ERROR = "ERROR"
-    CRITICAL = "CRITICAL"
+    DEBUG = "DEBUG"
 
 
-DEFAULT_LOG_LEVEL = LogLevel.WARNING
+LogLevelAdapter = TypeAdapter(LogLevel)
 
 
-def get_log_level() -> LogLevel:
-    load_dotenv()
-    return parse_log_level(os.getenv("HARLE_LOG_LEVEL"))
-
-
-def parse_log_level(value: str | None) -> LogLevel:
-    if not value:
-        return DEFAULT_LOG_LEVEL
-
-    try:
-        return LogLevel(value.strip().upper())
-    except ValueError:
-        return DEFAULT_LOG_LEVEL
-
-
-def configure_logging(level: LogLevel | str | None = None) -> None:
-    log_level = _resolve_log_level(level)
-    stdlib_logging.basicConfig(
-        level=log_level.value,
+def configure_logging(level: LogLevel) -> logging.Logger:
+    logging.basicConfig(
+        level=level.value,
         format=LOG_FORMAT,
         stream=sys.stderr,
     )
-    stdlib_logging.getLogger(LOGGER_NAME).setLevel(log_level.value)
+    logger = logging.getLogger(LOGGER_NAME)
+    logger.setLevel(level.value)
+    return logger
 
 
-def get_logger(name: str | None = None) -> stdlib_logging.Logger:
-    return stdlib_logging.getLogger(name or LOGGER_NAME)
+load_dotenv()
+LOG_LEVEL = os.getenv("HARLE_LOG_LEVEL")
 
+try:
+    log_level = LogLevelAdapter.validate_python(LOG_LEVEL or LogLevel.WARNING)
+    log = configure_logging(log_level)
+    log.info(f"Environment log level set to: {log_level.value}")
 
-def _resolve_log_level(level: LogLevel | str | None) -> LogLevel:
-    if isinstance(level, LogLevel):
-        return level
-    if isinstance(level, str):
-        return parse_log_level(level)
-    return get_log_level()
+except ValidationError:
+    log = configure_logging(LogLevel.WARNING)
+    log.warning(
+        f"Invalid environment log level: '{LOG_LEVEL}', using default: {LogLevel.WARNING}",
+    )

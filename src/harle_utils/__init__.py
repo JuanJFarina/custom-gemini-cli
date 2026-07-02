@@ -1,7 +1,7 @@
 from .base_settings import Settings
-from .logging import get_logger
+from .logging import log
 
 __all__ = [
-    "get_logger",
+    "log",
     "Settings",
 ]

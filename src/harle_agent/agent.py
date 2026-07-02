@@ -1,7 +1,5 @@
 import re
 from asyncio import Task, create_task
-from collections.abc import Awaitable, Callable
-from functools import wraps
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +12,8 @@ from google.genai.types import (
 )
 from pydantic import BaseModel, ConfigDict, Field
 
+from harle_utils import log
+
 from .memory import PERSONAL_HISTORY_PATH
 from .models.harle_models import HarleConfig, HarleStores, HarleToolResult
 from .prompts.system import SYSTEM_PROMPT
@@ -21,52 +21,15 @@ from .reasoning import (
     HarleThought,
     reasoning_protocol_text,
 )
+from .retry_decorator import retry
 from .runtime_context import (
     get_current_time_and_date,
     get_current_weather,
 )
-from .tools.expenses import build_expense_tool_from_env
+from .settings import get_agent_settings
+from .tools import build_expense_tool_from_env, show_tool_results
 
-MAX_RETRIES = 3
-MAX_LOOPS = 5
-
-
-def retry(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
-    @wraps(func)
-    async def wrapper(*args: Any, **kwargs: Any) -> Any:
-        attempts = 0
-        while attempts < MAX_RETRIES:
-            try:
-                return await func(*args, **kwargs)
-            except Exception:  # pylint: disable=broad-exception-caught
-                attempts += 1
-        if func.__name__ == "_call_gemini":
-            tool_results = kwargs.get("tool_results")
-            if tool_results:
-                return HarleThought(
-                    action="respond",
-                    response=(
-                        "I can't respond right now, but these are the results of "
-                        f"the tool calls: {show_tool_results(tool_results)}"
-                    ),
-                )
-            return HarleThought(
-                action="respond",
-                response="I can't respond right now, sorry !",
-            )
-        if func.__name__ == "_call_tool":
-            return HarleToolResult(
-                tool_name="Tool name not available when creating this error message.",
-                result={
-                    "error": (
-                        f"Tool can't be called, even after {MAX_RETRIES} "
-                        "attempts. Don't retry.",
-                    ),
-                },
-            )
-        raise RuntimeError(f"{func.__name__} failed after {MAX_RETRIES} attempts.")
-
-    return wrapper
+Settings = get_agent_settings()
 
 
 class Harle(BaseModel):
@@ -82,12 +45,16 @@ class Harle(BaseModel):
             self.stores.tool_store.tools.append(expense_tool)
 
     async def call(self, prompt: str) -> tuple[str, Task[None]]:
+        log.info("Loading conversations")
         conversations = await self.stores.conversation_store.load()
+        log.info("Building system instruction")
         system_instruction = self._build_system_instruction(conversations)
+        log.info("Starting reason and act loop")
         response: str = await self.reason_and_act(
             prompt=prompt,
             system_instruction=system_instruction,
         )
+        log.info("Creating task to save conversation")
         task = self._save_conversation(prompt=prompt, response_text=response)
         return response, task
 
@@ -98,7 +65,7 @@ class Harle(BaseModel):
         tool_results: list[HarleToolResult] | None = None,
     ) -> str:
         tool_results = tool_results or []
-        if len(tool_results) >= MAX_LOOPS:
+        if len(tool_results) >= Settings.MAX_LOOPS:
             return (
                 "I'm looping infinitely, these are the tool results so far: "
                 f"{show_tool_results(tool_results)}"
@@ -110,7 +77,9 @@ class Harle(BaseModel):
         )
 
         if harle_thought.action == "respond":
-            return harle_thought.response or ""
+            if not harle_thought.response:
+                log.warning("Action is respond but response is empty")
+            return harle_thought.response or "I can't respond for some reason, sorry !"
 
         if harle_thought.action == "call_tool":
             result = await self._call_tool(harle_thought)
@@ -119,7 +88,8 @@ class Harle(BaseModel):
                 system_instruction=system_instruction,
                 tool_results=tool_results + [result],
             )
-        return ""
+        log.warning(f"Unknown action: {harle_thought.action}")
+        return "I can't respond for some reason, sorry !"
 
     @retry
     async def _call_gemini(
@@ -145,19 +115,8 @@ class Harle(BaseModel):
                 ),
             )
         )
-        if not gemini_response.candidates:
-            return HarleThought(
-                action="respond",
-                response="Sorry, could you repeat ?",
-            )
 
         content = gemini_response.candidates[0].content
-        if content is None:
-            return HarleThought(
-                action="respond",
-                response="Sorry, could you repeat ?",
-            )
-
         parts = content.parts or []
         text_parts: list[str] = []
 
@@ -185,6 +144,7 @@ class Harle(BaseModel):
     async def _call_tool(self, reasoning: HarleThought) -> HarleToolResult:
         tool = self.stores.tool_store.get(reasoning.tool_name)  # type: ignore[arg-type]
         result = await tool.tool_func(reasoning.tool_args)
+        log.info(f"Tool {tool.tool_name} called successfully")
         return HarleToolResult(tool_name=tool.tool_name, result=result)
 
     def _extract_json_object(self, text: str) -> str:
@@ -219,17 +179,12 @@ class Harle(BaseModel):
         return system_instruction
 
 
-def show_tool_results(tool_results: list[HarleToolResult]) -> str:
-    if tool_results:
-        return "\n".join(
-            [f"{result.tool_name}: {result.result}" for result in tool_results],
-        )
-    return "No tool results yet."
-
-
 def _load_personal_history(path: Path) -> str:
     if not path.is_file():
+        log.warning(f"Personal history file {path} does not exist")
         return "No personal history has been recorded yet."
 
     content = path.read_text(encoding="utf-8").strip()
+    if not content:
+        log.warning("Personal history file is empty")
     return content or "No personal history has been recorded yet."

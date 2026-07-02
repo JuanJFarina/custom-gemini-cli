@@ -9,6 +9,8 @@ class AgentSettings(Settings):
     GOOGLE_SERVICE_ACCOUNT_JSON_BASE64: str
     GEMINI_API_KEY: str
     GEMINI_MODEL: str = "gemini-2.5-flash"
+    MAX_RETRIES: int = 3
+    MAX_LOOPS: int = 5
 
     @property
     def GOOGLE_SERVICE_ACCOUNT(self) -> str:  # pylint: disable=invalid-name
