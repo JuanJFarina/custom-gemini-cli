@@ -21,10 +21,12 @@ LogLevelAdapter = TypeAdapter(LogLevel)
 
 
 def configure_logging(level: LogLevel) -> logging.Logger:
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
     logging.basicConfig(
-        level=level.value,
         format=LOG_FORMAT,
-        stream=sys.stderr,
+        level=level.value,
+        handlers=[logging.StreamHandler(sys.stdout)],
     )
     logger = logging.getLogger(LOGGER_NAME)
     logger.setLevel(level.value)
