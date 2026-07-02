@@ -21,6 +21,7 @@ def retry(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
         attempts = 0
         time_taken = time()
         while attempts < Settings.MAX_RETRIES:
+            attempts += 1
             try:
                 result = await func(*args, **kwargs)
                 time_taken = time() - time_taken
@@ -29,7 +30,6 @@ def retry(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
                 )
                 return result
             except Exception as e:  # pylint: disable=broad-exception-caught
-                attempts += 1
                 log.error(f"Attempt {attempts} for {func.__name__} failed: {e}")
         time_taken = time() - time_taken
         log.warning(
