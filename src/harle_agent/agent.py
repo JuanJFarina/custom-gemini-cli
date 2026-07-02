@@ -1,6 +1,7 @@
 import re
 from asyncio import Task, create_task
 from pathlib import Path
+from time import time
 from typing import Any
 
 from google.genai import Client
@@ -45,20 +46,22 @@ class Harle(BaseModel):
             self.stores.tool_store.tools.append(expense_tool)
 
     async def call(self, prompt: str) -> tuple[str, Task[None]]:
+        start_time = time()
         log.info("Loading conversations")
         conversations = await self.stores.conversation_store.load()
         log.info("Building system instruction")
         system_instruction = self._build_system_instruction(conversations)
         log.info("Starting reason and act loop")
-        response: str = await self.reason_and_act(
+        response: str = await self._reason_and_act(
             prompt=prompt,
             system_instruction=system_instruction,
         )
         log.info("Creating task to save conversation")
         task = self._save_conversation(prompt=prompt, response_text=response)
+        log.info(f"Reason and act loop took {time() - start_time} seconds")
         return response, task
 
-    async def reason_and_act(
+    async def _reason_and_act(
         self,
         prompt: str,
         system_instruction: str,
@@ -83,7 +86,7 @@ class Harle(BaseModel):
 
         if harle_thought.action == "call_tool":
             result = await self._call_tool(harle_thought)
-            return await self.reason_and_act(
+            return await self._reason_and_act(
                 prompt=prompt,
                 system_instruction=system_instruction,
                 tool_results=tool_results + [result],

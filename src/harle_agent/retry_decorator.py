@@ -19,21 +19,19 @@ def retry(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
     @wraps(func)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
         attempts = 0
-        time_taken = time()
+        start_time = time()
         while attempts < Settings.MAX_RETRIES:
             attempts += 1
             try:
                 result = await func(*args, **kwargs)
-                time_taken = time() - time_taken
                 log.info(
-                    f"{func.__name__} SUCCEDED in {time_taken} seconds with {attempts} attempts",
+                    f"{func.__name__} SUCCEDED in {time() - start_time} seconds with {attempts} attempts",
                 )
                 return result
             except Exception as e:  # pylint: disable=broad-exception-caught
                 log.error(f"Attempt {attempts} for {func.__name__} failed: {e}")
-        time_taken = time() - time_taken
         log.warning(
-            f"{func.__name__} FAILED in {time_taken} seconds with {attempts} attempts",
+            f"{func.__name__} FAILED in {time() - start_time} seconds with {attempts} attempts",
         )
         if func.__name__ == "_call_gemini":
             tool_results = kwargs.get("tool_results")
