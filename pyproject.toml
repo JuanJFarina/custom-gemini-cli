@@ -15,6 +15,8 @@ dependencies = [
     "gspread",
     "httpx",
     "pydantic",
+    "pydantic-settings",
+    "python-dotenv",
     "uvicorn",
 ]
 
@@ -50,6 +52,7 @@ ignore = [
 ]
 
 [tool.mypy]
+plugins = ["pydantic.mypy"]
 check_untyped_defs = true
 mypy_path = "src"
 packages = [

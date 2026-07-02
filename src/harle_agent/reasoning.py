@@ -1,8 +1,6 @@
-from __future__ import annotations
-
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict
 
 from harle_agent.tools.expenses import (
     CATEGORY_COLUMNS,
@@ -18,21 +16,6 @@ class HarleThought(BaseModel):
     tool_name: Literal["add_non_credit_expense"] | None = None
     tool_args: dict[str, Any] | None = None
     response: str | None = None
-
-    @model_validator(mode="after")
-    def validate_action_payload(self) -> HarleThought:
-        if self.action == "respond":
-            if not self.response or not self.response.strip():
-                raise ValueError("response is required when action is respond.")
-            if self.tool_name is not None or self.tool_args is not None:
-                raise ValueError("tool fields must be empty when action is respond.")
-            return self
-
-        if self.tool_name is None or self.tool_args is None:
-            raise ValueError("tool_name and tool_args are required for call_tool.")
-        if self.response is not None:
-            raise ValueError("response must be empty when action is call_tool.")
-        return self
 
 
 def reasoning_protocol_text() -> str:

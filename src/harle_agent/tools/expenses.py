@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import calendar
 import re
 from dataclasses import dataclass
@@ -8,10 +6,7 @@ from typing import Any
 
 from harle_agent.models.harle_models import HarleTool
 from harle_agent.runtime_context import ROSARIO_TIMEZONE
-from harle_agent.tools.google_sheets import (
-    GoogleSheetsClient,
-    load_google_sheets_settings_from_env,
-)
+from harle_agent.tools.google_sheets import GoogleSheetsClient
 
 MONTH_SHEET_NAMES = [
     "enero",
@@ -108,10 +103,7 @@ class ExpenseTool:
 
 
 def build_expense_tool_from_env() -> HarleTool | None:
-    settings = load_google_sheets_settings_from_env()
-    if settings is None:
-        return None
-    expense_tool = ExpenseTool(GoogleSheetsClient(settings))
+    expense_tool = ExpenseTool(GoogleSheetsClient())
     return HarleTool(
         tool_name="add_non_credit_expense",
         tool_func=expense_tool.add_non_credit_expense,

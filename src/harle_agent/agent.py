@@ -12,7 +12,7 @@ from google.genai.types import (
     GoogleSearch,
     Tool,
 )
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from .memory import PERSONAL_HISTORY_PATH
 from .models.harle_models import HarleConfig, HarleStores, HarleToolResult
@@ -70,7 +70,7 @@ def retry(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
 
 
 class Harle(BaseModel):
-    config: HarleConfig
+    config: HarleConfig = Field(default_factory=HarleConfig)
     stores: HarleStores
     _client: Client | None = None
 
@@ -152,6 +152,12 @@ class Harle(BaseModel):
             )
 
         content = gemini_response.candidates[0].content
+        if content is None:
+            return HarleThought(
+                action="respond",
+                response="Sorry, could you repeat ?",
+            )
+
         parts = content.parts or []
         text_parts: list[str] = []
 

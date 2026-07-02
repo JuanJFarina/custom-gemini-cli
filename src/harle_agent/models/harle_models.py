@@ -3,12 +3,13 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from harle_agent.settings import get_agent_settings
 from harle_agent.stores.protocol import ConversationStore
 
 
 class HarleConfig(BaseModel):
-    model: str
-    api_key: str
+    model: str = get_agent_settings().GEMINI_MODEL
+    api_key: str = get_agent_settings().GEMINI_API_KEY
 
 
 class HarleToolResult(BaseModel):

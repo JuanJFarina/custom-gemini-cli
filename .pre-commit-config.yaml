@@ -35,6 +35,8 @@ repos:
           - "fastapi"
           - "httpx"
           - "pydantic"
+          - "pydantic-settings"
+          - "python-dotenv"
 
   - repo: https://github.com/PyCQA/pylint
     rev: v4.0.5

@@ -1,15 +1,11 @@
-from __future__ import annotations
-
 import asyncio
 from argparse import ArgumentParser, Namespace
 from sys import stderr
 
 from harle_agent import __version__
 from harle_agent.agent import Harle
-from harle_agent.config import DEFAULT_MODEL
-from harle_agent.models.harle_models import HarleConfig, HarleStores, HarleToolStore
+from harle_agent.models.harle_models import HarleStores, HarleToolStore
 from harle_agent.stores.file_store import FileConversationStore
-from harle_cli.config import get_api_key, get_model
 
 
 async def call_harle(harle: Harle, prompt: str) -> None:
@@ -22,26 +18,16 @@ async def call_harle(harle: Harle, prompt: str) -> None:
 def main() -> int:
     args = _parse_args()
 
-    api_key = get_api_key()
-    if not api_key:
-        return 2
-
     prompt = " ".join(args.prompt).strip()
     if not prompt:
         print("Prompt cannot be empty.", file=stderr)
         return 2
 
-    model = get_model(args.model)
-    harle_config = HarleConfig(
-        model=model,
-        api_key=api_key,
-    )
     harle_stores = HarleStores(
         conversation_store=FileConversationStore(),
         tool_store=HarleToolStore(),
     )
     harle = Harle(
-        config=harle_config,
         stores=harle_stores,
     )
 
@@ -63,10 +49,6 @@ def _parse_args() -> Namespace:
         "prompt",
         nargs="+",
         help="Prompt to send to Gemini. Quote it to pass it as one argument.",
-    )
-    parser.add_argument(
-        "--model",
-        help=f"Gemini model to use. Defaults to GEMINI_MODEL or {DEFAULT_MODEL}.",
     )
     parser.add_argument(
         "--version",

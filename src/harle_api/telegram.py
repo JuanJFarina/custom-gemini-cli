@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -41,10 +39,6 @@ def extract_text_message(update: Mapping[str, Any]) -> IncomingTelegramMessage |
         user_id=user_id,
         text=text.strip(),
     )
-
-
-def is_allowed_user(message: IncomingTelegramMessage, allowed_user_id: int) -> bool:
-    return message.user_id == allowed_user_id
 
 
 async def send_typing_action(*, bot_token: str, chat_id: int) -> None:

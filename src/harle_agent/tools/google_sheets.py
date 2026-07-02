@@ -1,29 +1,19 @@
-from __future__ import annotations
-
 import asyncio
-import base64
-import json
-import os
-from dataclasses import dataclass
 from typing import Any
 
 import gspread
 from google.oauth2.service_account import Credentials
 from gspread.utils import ValueInputOption, ValueRenderOption
+from pydantic import BaseModel, Field
+
+from harle_agent.settings import AgentSettings, get_agent_settings
 
 GOOGLE_SHEETS_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 
-@dataclass(frozen=True)
-class GoogleSheetsSettings:
-    spreadsheet_id: str
-    service_account_info: dict[str, Any]
-
-
-class GoogleSheetsClient:
-    def __init__(self, settings: GoogleSheetsSettings) -> None:
-        self._settings = settings
-        self._spreadsheet: Any | None = None
+class GoogleSheetsClient(BaseModel):
+    settings: AgentSettings = Field(default_factory=get_agent_settings)
+    _spreadsheet: Any | None = None
 
     @property
     def spreadsheet(self) -> Any:
@@ -33,10 +23,12 @@ class GoogleSheetsClient:
 
     def _open_spreadsheet(self) -> Any:
         credentials = Credentials.from_service_account_info(
-            self._settings.service_account_info,
+            self.settings.GOOGLE_SERVICE_ACCOUNT,
             scopes=GOOGLE_SHEETS_SCOPES,
         )
-        return gspread.authorize(credentials).open_by_key(self._settings.spreadsheet_id)
+        return gspread.authorize(credentials).open_by_key(
+            self.settings.EXPENSES_SPREADSHEET_ID,
+        )
 
     async def get_formula(self, *, sheet_name: str, cell: str) -> str:
         return await asyncio.to_thread(
@@ -68,25 +60,3 @@ class GoogleSheetsClient:
             range_name=cell,
             value_input_option=ValueInputOption.user_entered,
         )
-
-
-def load_google_sheets_settings_from_env() -> GoogleSheetsSettings | None:
-    spreadsheet_id = os.environ.get("EXPENSES_SPREADSHEET_ID")
-    encoded_credentials = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON_BASE64")
-    if not spreadsheet_id or not encoded_credentials:
-        return None
-
-    return GoogleSheetsSettings(
-        spreadsheet_id=spreadsheet_id,
-        service_account_info=_decode_service_account_info(encoded_credentials),
-    )
-
-
-def _decode_service_account_info(encoded_credentials: str) -> dict[str, Any]:
-    decoded = base64.b64decode(encoded_credentials).decode("utf-8")
-    payload = json.loads(decoded)
-    if not isinstance(payload, dict):
-        raise ValueError(
-            "GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 must decode to a JSON object.",
-        )
-    return payload
