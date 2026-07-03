@@ -11,6 +11,7 @@ class AgentSettings(Settings):
     GEMINI_MODEL: str = "gemini-2.5-flash"
     MAX_RETRIES: int = 3
     MAX_LOOPS: int = 5
+    MAX_CONVERSATION_TOKENS: int = 1000
 
     @property
     def GOOGLE_SERVICE_ACCOUNT(self) -> str:  # pylint: disable=invalid-name

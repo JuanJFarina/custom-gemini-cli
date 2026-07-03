@@ -7,7 +7,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
-from .protocol import MAX_CONVERSATION_TOKENS
+from harle_agent.settings import get_agent_settings
+
+TOKENS_CAP = get_agent_settings().MAX_CONVERSATION_TOKENS
 
 NO_CONVERSATIONS_MESSAGE = "No conversations yet"
 
@@ -28,10 +30,10 @@ class SQLiteConversationStore:
         self.chat_id = chat_id
         self.user_id = user_id
 
-    async def load(self, *, max_tokens: int = MAX_CONVERSATION_TOKENS) -> str:
+    async def load(self, *, max_tokens: int = TOKENS_CAP) -> str:
         return await asyncio.to_thread(self._load_sync, max_tokens=max_tokens)
 
-    def _load_sync(self, *, max_tokens: int = MAX_CONVERSATION_TOKENS) -> str:
+    def _load_sync(self, *, max_tokens: int = TOKENS_CAP) -> str:
         self._ensure_schema()
 
         with closing(self._connect()) as connection:

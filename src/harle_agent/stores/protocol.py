@@ -1,11 +1,13 @@
 from typing import Protocol, runtime_checkable
 
-MAX_CONVERSATION_TOKENS = 4000
+from harle_agent.settings import get_agent_settings
+
+TOKENS_CAP = get_agent_settings().MAX_CONVERSATION_TOKENS
 
 
 @runtime_checkable
 class ConversationStore(Protocol):
-    async def load(self, *, max_tokens: int = MAX_CONVERSATION_TOKENS) -> str:
+    async def load(self, *, max_tokens: int = TOKENS_CAP) -> str:
         """Return conversation context ready to inject into the system prompt.
         The context is limited to max_tokens tokens."""
 

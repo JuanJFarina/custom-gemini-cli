@@ -4,18 +4,19 @@ from datetime import datetime
 from pathlib import Path
 
 from harle_agent.memory import CONVERSATIONS_DIR
+from harle_agent.settings import get_agent_settings
 
-from .protocol import MAX_CONVERSATION_TOKENS
+TOKENS_CAP = get_agent_settings().MAX_CONVERSATION_TOKENS
 
 
 class FileConversationStore:
     def __init__(self, conversations_dir: Path = CONVERSATIONS_DIR) -> None:
         self.conversations_dir = conversations_dir
 
-    async def load(self, *, max_tokens: int = MAX_CONVERSATION_TOKENS) -> str:
+    async def load(self, *, max_tokens: int = TOKENS_CAP) -> str:
         return await asyncio.to_thread(self._load_sync, max_tokens=max_tokens)
 
-    def _load_sync(self, *, max_tokens: int = MAX_CONVERSATION_TOKENS) -> str:
+    def _load_sync(self, *, max_tokens: int = TOKENS_CAP) -> str:
         if not self.conversations_dir.is_dir():
             return "No previous conversations yet."
 
