@@ -22,30 +22,6 @@ def reasoning_protocol_text() -> str:
     categories = ", ".join(CATEGORY_COLUMNS)
     months = ", ".join(MONTH_SHEET_NAMES)
     return f"""
-Internal response protocol:
-- You must return exactly one valid JSON object and no markdown.
-- Do not wrap the JSON in code fences.
-- Use this protocol only for this assistant response; Juan must never see it.
-
-Allowed JSON object for a normal answer:
-{{
-  "action": "respond",
-  "response": "Your natural response to Juan"
-}}
-
-Allowed JSON object for a non-credit expense or refund update:
-{{
-  "action": "call_tool",
-  "tool_name": "add_non_credit_expense",
-  "tool_args": {{
-    "amount": 100,
-    "category": "hogar",
-    "day": null,
-    "month": null,
-    "refund": false
-  }}
-}}
-
 Tool rules:
 - For ordinary questions or any request that does not require an expense update, use action "respond".
 - Only call add_non_credit_expense for one-time non-credit expenses or refunds.

@@ -179,6 +179,7 @@ class Harle(BaseModel):
             latest_conversations=latest_conversations,
         )
         system_instruction = f"{system_instruction}\n\n{reasoning_protocol_text()}"
+        print(f"\n---------\n {system_instruction} \n---------\n")
         return system_instruction
 
 
