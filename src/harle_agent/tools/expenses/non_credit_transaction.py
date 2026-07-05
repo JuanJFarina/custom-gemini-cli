@@ -3,8 +3,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from harle_agent.environment_knowledge import ROSARIO_TIMEZONE
 from harle_agent.models import HarleTool, HarleToolResult
-from harle_agent.runtime_context import ROSARIO_TIMEZONE
 
 from .cons import (
     ADD_NON_CREDIT_TRANSACTION_PROMPT,

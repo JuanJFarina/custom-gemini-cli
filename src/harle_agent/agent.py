@@ -15,7 +15,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from harle_utils import log
 
-from .memory import PERSONAL_HISTORY_PATH
+from .environment_knowledge import (
+    get_current_time_and_date,
+    get_current_weather,
+)
 from .models import (
     HarleConfig,
     HarleStores,
@@ -26,11 +29,7 @@ from .models import (
 )
 from .prompts import SYSTEM_PROMPT
 from .retry_decorator import retry
-from .runtime_context import (
-    get_current_time_and_date,
-    get_current_weather,
-)
-from .settings import get_agent_settings
+from .settings import PERSONAL_HISTORY_PATH, get_agent_settings
 from .tools import TOOLS, show_tool_results
 
 Settings = get_agent_settings()

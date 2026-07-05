@@ -1,7 +1,13 @@
 import base64
 import json
+from pathlib import Path
 
 from harle_utils import Settings
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DATA_DIR = PROJECT_ROOT / "data"
+PERSONAL_HISTORY_PATH = DATA_DIR / "juan_personal_history.md"
+CONVERSATIONS_DIR = DATA_DIR / "conversations"
 
 
 class AgentSettings(Settings):

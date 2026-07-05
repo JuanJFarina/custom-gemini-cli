@@ -3,8 +3,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from harle_agent.memory import CONVERSATIONS_DIR
-from harle_agent.settings import get_agent_settings
+from harle_agent.settings import CONVERSATIONS_DIR, get_agent_settings
 
 TOKENS_CAP = get_agent_settings().MAX_CONVERSATION_TOKENS
 
