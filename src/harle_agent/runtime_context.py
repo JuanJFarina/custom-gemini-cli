@@ -73,7 +73,7 @@ def get_current_weather() -> str:
 
     summary = _weather_code_summary(cast(int, weather_code))
     values = ", ".join(part for part in parts if part)
-    return f"{summary}; {values} in Rosario, Argentina."
+    return f"{summary}; {values}"
 
 
 def _format_value(label: str, value: object, unit: str) -> str:
