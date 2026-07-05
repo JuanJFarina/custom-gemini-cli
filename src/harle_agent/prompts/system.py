@@ -30,10 +30,10 @@ Schema 1 for responding to Juan:
   "response": "Your response to Juan"
 }}
 
-Schema 2 for calling a tool (example with "add_non_credit_transaction" tool):
+Schema 2 for calling a tool (example with "add_one_time_transaction" tool):
 {{
   "action": "call_tool",
-  "tool_name": "add_non_credit_transaction",
+  "tool_name": "add_one_time_transaction",
   "tool_args": {{
     "amount": 100,
     "category": "E"

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from harle_agent.settings import AgentSettings, get_agent_settings
 
-GOOGLE_SHEETS_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+from .constants import GOOGLE_SHEETS_SCOPES, SIMPLE_FORMULA_PATTERN
 
 
 class GoogleSheetsClient(BaseModel):
@@ -60,3 +60,21 @@ class GoogleSheetsClient(BaseModel):
             range_name=cell,
             value_input_option=ValueInputOption.user_entered,
         )
+
+    def build_updated_formula(
+        self, *, old_formula: str, amount: int | str, refund: bool
+    ) -> str:
+        formula = old_formula.strip()
+        if formula == "":
+            formula = "=0"
+
+        if not SIMPLE_FORMULA_PATTERN.fullmatch(formula):
+            raise ValueError(f"Cell formula is not a simple expense formula: {formula}")
+
+        amount_term = str(amount)
+
+        if formula == "=0":
+            return f"=-{amount_term}" if refund else f"={amount_term}"
+
+        operator = "-" if refund else "+"
+        return f"{formula}{operator}{amount_term}"
