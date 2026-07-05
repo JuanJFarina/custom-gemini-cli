@@ -1,5 +1,4 @@
 from datetime import datetime
-from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from pydantic import Field
@@ -33,14 +32,10 @@ class AddInInstallmentsTransactionArgs(TransactionArgs):
 async def add_in_installments_transaction(args: dict[str, Any]) -> HarleToolResult:
     sheets_client = GoogleSheetsClient()
     validated_args = AddInInstallmentsTransactionArgs.from_args(args)
-    installment_amount = (
-        validated_args.amount / Decimal(validated_args.installments)
-    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-
+    installment_amount = validated_args.amount / validated_args.installments
     updated_cells: list[dict[str, Any]] = []
 
     for month_offset in range(validated_args.installments):
-        installment_number = month_offset + 1
         remaining_installments = validated_args.installments - month_offset
         absolute_month_index = validated_args.month - 1 + month_offset
         target_month = (absolute_month_index % 12) + 1
@@ -48,15 +43,14 @@ async def add_in_installments_transaction(args: dict[str, Any]) -> HarleToolResu
             "next_year" if absolute_month_index >= 12 else "current_year"
         )
         target_day = validated_args.day if month_offset == 0 else 1
-        month_string = MONTH_SHEET_MAPPING[target_month]
         cell = f"{validated_args.category}{target_day + 1}"
         amount_formula = (
-            f"({installment_amount} * "
+            f"({installment_amount:.2f} * "
             f"{remaining_installments} / {remaining_installments})"
         )
 
         old_formula = await sheets_client.get_formula(
-            sheet_name=month_string,
+            sheet_name=MONTH_SHEET_MAPPING[target_month],
             cell=cell,
             target_spreadsheet=target_spreadsheet,
         )
@@ -66,7 +60,7 @@ async def add_in_installments_transaction(args: dict[str, Any]) -> HarleToolResu
             refund=False,
         )
         await sheets_client.update_formula(
-            sheet_name=month_string,
+            sheet_name=MONTH_SHEET_MAPPING[target_month],
             cell=cell,
             formula=new_formula,
             target_spreadsheet=target_spreadsheet,
@@ -74,13 +68,11 @@ async def add_in_installments_transaction(args: dict[str, Any]) -> HarleToolResu
 
         updated_cells.append(
             {
-                "target_spreadsheet": target_spreadsheet,
-                "sheet_modified": month_string,
-                "cell": cell,
-                "installment_number": installment_number,
-                "remaining_installments": remaining_installments,
-                "old_formula": old_formula,
-                "new_formula": new_formula,
+                "spreadsheet_year": target_spreadsheet,
+                "spreadsheet_month": target_month,
+                "day_updated": target_day,
+                "installment_amount": f"{installment_amount:.2f}",
+                "installment_number": month_offset + 1,
             },
         )
 
@@ -89,9 +81,6 @@ async def add_in_installments_transaction(args: dict[str, Any]) -> HarleToolResu
         result={
             "ok": True,
             "category": args["category"],
-            "amount": str(validated_args.amount),
-            "installments": validated_args.installments,
-            "installment_amount": str(installment_amount),
             "updated_cells": updated_cells,
         },
     )
@@ -101,22 +90,13 @@ ADD_IN_INSTALLMENTS_TRANSACTION_PROMPT = """
 ## "add_in_installments_transaction" tool
 
 - Tool for adding a fixed installments transaction to the expenses spreadsheet.
-- This tool will update each month where an installment is to be paid.
+- This tool will update each month where an installment is to be paid, using the specific day of the transaction for the first installment, and using the 1st day of the month for the rest of the installments.
 - Args:
   - "amount": Positive integer that represents the total amount of the transaction in Argentine pesos.
   - "installments": Integer number of monthly installments, from 2 to 12.
   - "category": String of one of the valid categories.
   - "month": Integer of the first month of the transaction, from 1 to 12. Will default to current month if not provided.
   - "day": Integer of the day of the transaction, from 1 to 31. Will default to current day if not provided.
-- Valid category strings:
-  - "B": For all fees related to rent and building (spreadsheet column name: "alquileres").
-  - "C": For all fees related to essential services like electricity, gas, water, healthcare, etc. (spreadsheet column name: "servicios_esenciales").
-  - "D": For all fees related to non-essential services like streaming, gym, subscriptions, etc. (spreadsheet column name: "servicios_no_esenciales").
-  - "E": For all fees related to consumable items inside the house like groceries, food, cleaning, etc. (spreadsheet column name: "hogar").
-  - "F": For all fees related to transportation like taxi, Uber, buses, fuel, parking, etc. (spreadsheet column name: "transporte").
-  - "G": For all fees related to out-of-the-house consumables and entertainment like restaurants, bars, cinema, outings, etc. (spreadsheet column name: "salidas").
-  - "H": For all fees related to long-term buys like clothes, electronics, games, books, shopping, etc. (spreadsheet column name: "shopping").
-  - "I": For anything that doesn't fit into the other categories. (spreadsheet column name: "otros").
 - Example for all args for buying a 100000 videogame in 3 installments on July 5th:
 {
   "amount": 100000,
@@ -124,8 +104,7 @@ ADD_IN_INSTALLMENTS_TRANSACTION_PROMPT = """
   "category": "H",
   "month": 7,
   "day": 5
-}
-"""
+}"""
 
 
 ADD_IN_INSTALLMENTS_TRANSACTION_TOOL = HarleTool(

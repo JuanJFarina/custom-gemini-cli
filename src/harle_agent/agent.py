@@ -181,7 +181,11 @@ class Harle(BaseModel):
             current_weather=get_current_weather(),
             latest_conversations=latest_conversations,
         )
-        print(f"\n---------\n {system_instruction} \n---------\n")
+        print(f"\n---------\n{system_instruction}\n---------\n")
+        print(
+            f"\n---------\nSystem Instructions Token Size: {len(system_instruction) / 4:.0f}\n---------\n",
+        )
+        log.info(f"System Instructions Token Size: {len(system_instruction) / 4:.0f}")
         return system_instruction
 
 
