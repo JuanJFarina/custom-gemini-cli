@@ -1,4 +1,6 @@
-from .expenses import ExpenseTool, build_expense_tool_from_env
+from .expenses import ADD_NON_CREDIT_TRANSACTION_TOOL
 from .tools_utils import show_tool_results
 
-__all__ = ["show_tool_results", "ExpenseTool", "build_expense_tool_from_env"]
+TOOLS = [ADD_NON_CREDIT_TRANSACTION_TOOL]
+
+__all__ = ["show_tool_results", "TOOLS"]

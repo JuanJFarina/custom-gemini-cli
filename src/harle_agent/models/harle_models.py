@@ -1,10 +1,11 @@
-from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from harle_agent.settings import get_agent_settings
 from harle_agent.stores.protocol import ConversationStore
+
+from .harle_tool import HarleToolStore
 
 
 class HarleConfig(BaseModel):
@@ -12,24 +13,20 @@ class HarleConfig(BaseModel):
     api_key: str = get_agent_settings().GEMINI_API_KEY
 
 
-class HarleToolResult(BaseModel):
-    tool_name: str
-    result: Any
+class HarleResponse(BaseModel):
+    action: Literal["respond"]
+    response: str
 
 
-class HarleTool(BaseModel):
-    tool_name: str
-    tool_func: Callable[..., Awaitable[Any]]
+class HarleToolCall(BaseModel):
+    action: Literal["call_tool"]
+    tool_name: Literal["add_non_credit_transaction"]
+    tool_args: dict[str, Any]
 
 
-class HarleToolStore(BaseModel):
-    tools: list[HarleTool] = Field(default_factory=list)
+HarleThought = HarleResponse | HarleToolCall
 
-    def get(self, tool_name: str) -> HarleTool:
-        for tool in self.tools:
-            if tool.tool_name == tool_name:
-                return tool
-        raise ValueError(f"Tool {tool_name} not found")
+HarleThoughtAdapter = TypeAdapter(HarleThought, config={"discriminator": "action"})  # type: ignore[call-overload]
 
 
 class HarleStores(BaseModel):

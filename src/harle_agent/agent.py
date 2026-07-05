@@ -16,19 +16,22 @@ from pydantic import BaseModel, ConfigDict, Field
 from harle_utils import log
 
 from .memory import PERSONAL_HISTORY_PATH
-from .models.harle_models import HarleConfig, HarleStores, HarleToolResult
-from .prompts.system import SYSTEM_PROMPT
-from .reasoning import (
+from .models import (
+    HarleConfig,
+    HarleStores,
     HarleThought,
-    reasoning_protocol_text,
+    HarleThoughtAdapter,
+    HarleToolCall,
+    HarleToolResult,
 )
+from .prompts import SYSTEM_PROMPT
 from .retry_decorator import retry
 from .runtime_context import (
     get_current_time_and_date,
     get_current_weather,
 )
 from .settings import get_agent_settings
-from .tools import build_expense_tool_from_env, show_tool_results
+from .tools import TOOLS, show_tool_results
 
 Settings = get_agent_settings()
 
@@ -42,8 +45,7 @@ class Harle(BaseModel):
 
     def model_post_init(self, _: Any, /) -> None:
         self._client = self._client or Client(api_key=self.config.api_key)
-        if expense_tool := build_expense_tool_from_env():
-            self.stores.tool_store.tools.append(expense_tool)
+        self.stores.tool_store.tools.extend(TOOLS)
 
     async def call(self, prompt: str) -> tuple[str, Task[None]]:
         start_time = time()
@@ -132,7 +134,7 @@ class Harle(BaseModel):
                 text_parts.append(text.strip())
 
         response_text = self._extract_json_object(text_parts[-1])
-        return HarleThought.model_validate_json(response_text)
+        return HarleThoughtAdapter.validate_json(response_text)
 
     def _save_conversation(self, prompt: str, response_text: str) -> Task[None]:
         return create_task(
@@ -144,11 +146,11 @@ class Harle(BaseModel):
         )
 
     @retry
-    async def _call_tool(self, reasoning: HarleThought) -> HarleToolResult:
-        tool = self.stores.tool_store.get(reasoning.tool_name)  # type: ignore[arg-type]
-        result = await tool.tool_func(reasoning.tool_args)
-        log.info(f"Tool {tool.tool_name} called successfully")
-        return HarleToolResult(tool_name=tool.tool_name, result=result)
+    async def _call_tool(self, tool_call: HarleToolCall) -> HarleToolResult:
+        tool = self.stores.tool_store.get(tool_call.tool_name)  # type: ignore[arg-type]
+        result = await tool.func(tool_call.tool_args)
+        log.info(f"Tool {tool.name} called successfully")
+        return result
 
     def _extract_json_object(self, text: str) -> str:
         stripped = text.strip()
@@ -167,18 +169,19 @@ class Harle(BaseModel):
             Original user message:
             {prompt}
 
-            After it, you called the tool {tool_result.tool_name}. This is the result:
+            After it, you called the tool {tool_result.called_tool_name}. This is the result:
             {tool_result.result}
             """
 
     def _build_system_instruction(self, latest_conversations: str) -> str:
+        tools_prompt = "\n".join([tool.prompt for tool in TOOLS])
         system_instruction = SYSTEM_PROMPT.format(
+            tools=tools_prompt,
+            juan_personal_history_summary=_load_personal_history(PERSONAL_HISTORY_PATH),
             current_time_and_date=get_current_time_and_date(),
             current_weather=get_current_weather(),
-            juan_personal_history_summary=_load_personal_history(PERSONAL_HISTORY_PATH),
             latest_conversations=latest_conversations,
         )
-        system_instruction = f"{system_instruction}\n\n{reasoning_protocol_text()}"
         print(f"\n---------\n {system_instruction} \n---------\n")
         return system_instruction
 

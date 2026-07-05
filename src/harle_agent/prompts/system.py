@@ -30,18 +30,23 @@ Schema 1 for responding to Juan:
   "response": "Your response to Juan"
 }}
 
-Schema 2 for calling a tool (example with "add_non_credit_expense" tool):
+Schema 2 for calling a tool (example with "add_non_credit_transaction" tool):
 {{
   "action": "call_tool",
-  "tool_name": "add_non_credit_expense",
+  "tool_name": "add_non_credit_transaction",
   "tool_args": {{
     "amount": 100,
-    "category": "hogar",
-    "day": null,
-    "month": null,
-    "refund": false
+    "category": "E"
   }}
 }}
+
+# Your Tools
+
+<tools_instructions>
+
+{tools}
+
+</tools_instructions>
 
 # Juan's Personal History
 
@@ -59,7 +64,11 @@ Schema 2 for calling a tool (example with "add_non_credit_expense" tool):
 - This is the current weather: {current_weather}.
 - These are your latest conversations with Juan:
 
+<latest_conversations_with_juan>
+
 {latest_conversations}
+
+</latest_conversations_with_juan>
 
 </your_current_knowledge>
 """

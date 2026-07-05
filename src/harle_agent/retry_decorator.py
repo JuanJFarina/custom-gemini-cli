@@ -5,17 +5,16 @@ from typing import Any
 
 from harle_utils import log
 
-from .models.harle_models import HarleToolResult
-from .reasoning import (
-    HarleThought,
-)
+from .models import HarleResponse, HarleToolResult
 from .settings import get_agent_settings
 from .tools import show_tool_results
 
 Settings = get_agent_settings()
 
 
-def retry(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+def retry(
+    func: Callable[..., Awaitable[Any]],
+) -> Callable[..., Awaitable[Any]]:
     @wraps(func)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
         attempts = 0
@@ -36,20 +35,20 @@ def retry(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
         if func.__name__ == "_call_gemini":
             tool_results = kwargs.get("tool_results")
             if tool_results:
-                return HarleThought(
+                return HarleResponse(
                     action="respond",
                     response=(
                         "I can't respond right now, but these are the results of "
                         f"the tool calls: {show_tool_results(tool_results)}"
                     ),
                 )
-            return HarleThought(
+            return HarleResponse(
                 action="respond",
                 response="I can't respond right now, sorry !",
             )
         if func.__name__ == "_call_tool":
             return HarleToolResult(
-                tool_name="Tool name not available when creating this error message.",
+                called_tool_name="Tool name not available when creating this error message.",
                 result={
                     "error": (
                         f"Tool can't be called, even after {Settings.MAX_RETRIES} "

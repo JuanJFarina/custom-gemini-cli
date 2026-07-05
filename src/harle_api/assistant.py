@@ -3,8 +3,8 @@ from asyncio import Task
 import httpx
 
 from harle_agent.agent import Harle
-from harle_agent.models.harle_models import HarleStores, HarleToolStore
-from harle_agent.stores.sqlite_store import SQLiteConversationStore
+from harle_agent.models import HarleStores, HarleToolStore
+from harle_agent.stores import SQLiteConversationStore
 from harle_api.settings import ApiSettings, get_settings
 from harle_api.telegram import (
     IncomingTelegramMessage,
