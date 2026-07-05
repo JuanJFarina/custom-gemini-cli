@@ -62,7 +62,11 @@ class GoogleSheetsClient(BaseModel):
         )
 
     def build_updated_formula(
-        self, *, old_formula: str, amount: int | str, refund: bool
+        self,
+        *,
+        old_formula: str,
+        amount: int | str,
+        refund: bool,
     ) -> str:
         formula = old_formula.strip()
         if formula == "":
