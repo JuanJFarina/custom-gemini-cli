@@ -12,6 +12,7 @@ CONVERSATIONS_DIR = DATA_DIR / "conversations"
 
 class AgentSettings(Settings):
     EXPENSES_SPREADSHEET_ID: str
+    EXPENSES_NEXT_YEAR_SPREADSHEET_ID: str
     GOOGLE_SERVICE_ACCOUNT_JSON_BASE64: str
     GEMINI_API_KEY: str
     GEMINI_MODEL: str = "gemini-2.5-flash"

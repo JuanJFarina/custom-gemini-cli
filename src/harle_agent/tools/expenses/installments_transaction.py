@@ -10,6 +10,7 @@ from harle_agent.models import HarleTool, HarleToolResult
 from .utils import (
     MONTH_SHEET_MAPPING,
     GoogleSheetsClient,
+    TargetYear,
     TransactionArgs,
 )
 
@@ -41,7 +42,11 @@ async def add_in_installments_transaction(args: dict[str, Any]) -> HarleToolResu
     for month_offset in range(validated_args.installments):
         installment_number = month_offset + 1
         remaining_installments = validated_args.installments - month_offset
-        target_month = ((validated_args.month - 1 + month_offset) % 12) + 1
+        absolute_month_index = validated_args.month - 1 + month_offset
+        target_month = (absolute_month_index % 12) + 1
+        target_spreadsheet: TargetYear = (
+            "next_year" if absolute_month_index >= 12 else "current_year"
+        )
         target_day = validated_args.day if month_offset == 0 else 1
         month_string = MONTH_SHEET_MAPPING[target_month]
         cell = f"{validated_args.category}{target_day + 1}"
@@ -53,6 +58,7 @@ async def add_in_installments_transaction(args: dict[str, Any]) -> HarleToolResu
         old_formula = await sheets_client.get_formula(
             sheet_name=month_string,
             cell=cell,
+            target_spreadsheet=target_spreadsheet,
         )
         new_formula = sheets_client.build_updated_formula(
             old_formula=old_formula,
@@ -63,10 +69,12 @@ async def add_in_installments_transaction(args: dict[str, Any]) -> HarleToolResu
             sheet_name=month_string,
             cell=cell,
             formula=new_formula,
+            target_spreadsheet=target_spreadsheet,
         )
 
         updated_cells.append(
             {
+                "target_spreadsheet": target_spreadsheet,
                 "sheet_modified": month_string,
                 "cell": cell,
                 "installment_number": installment_number,
