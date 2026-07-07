@@ -42,7 +42,7 @@ class PostgresConversationStore:
         async with self.pool.acquire() as connection:
             rows = await connection.fetch(
                 """
-                SELECT user_id, telegram_chat_id, prompt, response, model, created_at
+                SELECT prompt, response, model, created_at
                 FROM conversations
                 WHERE user_id = $1 AND telegram_chat_id = $2
                 ORDER BY created_at DESC, id DESC
@@ -184,9 +184,6 @@ def _format_conversation_for_context(record: ConversationRecord) -> str:
     return json.dumps(
         {
             "conversation_date": record.created_at,
-            "user_id": record.user_id,
-            "user_name": record.user_name,
-            "telegram_chat_id": record.chat_id,
             "juan_jose_farina_prompt": record.prompt,
             "response": record.response,
         },
