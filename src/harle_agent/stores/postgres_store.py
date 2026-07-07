@@ -15,12 +15,8 @@ NO_CONVERSATIONS_MESSAGE = "No conversations yet"
 
 @dataclass(frozen=True)
 class ConversationRecord:
-    user_id: str
-    user_name: str
-    chat_id: int | None
     prompt: str
     response: str
-    model: str
     created_at: str
 
 
@@ -59,7 +55,7 @@ class PostgresConversationStore:
         context_length = 0
         for row in rows:
             conversation = _format_conversation_for_context(
-                _record_from_row(row, user_name=self.user_name),
+                _record_from_row(row),
             )
             separator_length = 1 if conversations else 0
             next_context_length = context_length + separator_length + len(conversation)
@@ -168,14 +164,10 @@ async def _ensure_owner_user(
     return row["id"]
 
 
-def _record_from_row(row: asyncpg.Record, *, user_name: str) -> ConversationRecord:
+def _record_from_row(row: asyncpg.Record) -> ConversationRecord:
     return ConversationRecord(
-        user_id=str(row["user_id"]),
-        user_name=user_name,
-        chat_id=_optional_int(row["telegram_chat_id"]),
         prompt=str(row["prompt"]),
         response=str(row["response"]),
-        model=str(row["model"]),
         created_at=_format_created_at(row["created_at"]),
     )
 
