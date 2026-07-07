@@ -105,7 +105,7 @@ Columns for totals, moving averages, and past markers are never written by the t
 
 ## Telegram bot
 
-This project also includes a small FastAPI Telegram webhook app. It reuses the Gemini request code, but stores Telegram conversations separately in SQLite so the CLI behavior remains unchanged.
+This project also includes a small FastAPI Telegram webhook app. It reuses the Gemini request code and stores Telegram conversations in PostgreSQL when `POSTGRES_DATABASE_URL` is configured, or SQLite as a local fallback.
 
 Install dependencies:
 
@@ -125,7 +125,7 @@ Health check:
 Invoke-RestMethod http://127.0.0.1:8000/healthcheck
 ```
 
-Required environment variables:
+Environment variables:
 
 ```env
 GEMINI_API_KEY=your_api_key_here
@@ -133,6 +133,10 @@ GEMINI_MODEL=gemini-2.5-flash
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
 TELEGRAM_ALLOWED_USER_ID=123456789
 TELEGRAM_WEBHOOK_SECRET=your_random_webhook_secret_here
+TELEGRAM_USER_NAME=Your Name
+POSTGRES_DATABASE_URL=postgresql://user:password@host:5432/database?sslmode=require
+POSTGRES_POOL_MIN_SIZE=1
+POSTGRES_POOL_MAX_SIZE=5
 SQLITE_PATH=data/bot_conversations.sqlite3
 EXPENSES_SPREADSHEET_ID=your_expenses_spreadsheet_id_here
 GOOGLE_SERVICE_ACCOUNT_JSON_BASE64=base64_encoded_service_account_json_here
@@ -158,6 +162,10 @@ Start command: uvicorn harle_api.app:app --host 0.0.0.0 --port $PORT
 Health check path: /healthcheck
 ```
 
-For durable SQLite storage on Render, attach a persistent disk and set `SQLITE_PATH` to a path inside that mounted disk. Without a persistent disk, SQLite is still useful for quick testing, but the database can be lost when the instance restarts or redeploys.
+For durable Telegram conversation storage in production, set `POSTGRES_DATABASE_URL` to a PostgreSQL connection string, such as a Supabase database URL. If your provider requires SSL, include it in the URL, for example `?sslmode=require`. `POSTGRES_POOL_MIN_SIZE` and `POSTGRES_POOL_MAX_SIZE` are optional connection pool settings; the defaults are tuned for a small personal bot.
+
+When `POSTGRES_DATABASE_URL` is set, the FastAPI lifespan creates the PostgreSQL pool, prepares the schema, and upserts the single owner user at startup using `TELEGRAM_ALLOWED_USER_ID` and optional `TELEGRAM_USER_NAME`. During Telegram message handling, conversation loading only runs a pooled `SELECT`, and saving only runs a pooled `INSERT`.
+
+If `POSTGRES_DATABASE_URL` is not set, the app falls back to SQLite. For durable SQLite storage on Render, attach a persistent disk and set `SQLITE_PATH` to a path inside that mounted disk. Without a persistent disk, SQLite is still useful for quick testing, but the database can be lost when the instance restarts or redeploys.
 
 On Vercel, SQLite is only suitable for quick testing because the filesystem is ephemeral. The app automatically stores SQLite under `/tmp` when it detects Vercel, so a relative `SQLITE_PATH` such as `data/bot_conversations.sqlite3` becomes `/tmp/bot_conversations.sqlite3`.

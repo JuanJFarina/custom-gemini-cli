@@ -12,6 +12,7 @@ TELEGRAM_MESSAGE_LIMIT = 4096
 class IncomingTelegramMessage:
     chat_id: int
     user_id: int
+    user_name: str
     text: str
 
 
@@ -37,6 +38,7 @@ def extract_text_message(update: Mapping[str, Any]) -> IncomingTelegramMessage |
     return IncomingTelegramMessage(
         chat_id=chat_id,
         user_id=user_id,
+        user_name=_display_name(from_user, fallback=f"Telegram user {user_id}"),
         text=text.strip(),
     )
 
@@ -89,3 +91,22 @@ def _parse_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _display_name(user: Mapping[str, Any], *, fallback: str) -> str:
+    first_name = _parse_str(user.get("first_name"))
+    last_name = _parse_str(user.get("last_name"))
+    username = _parse_str(user.get("username"))
+
+    full_name = " ".join(part for part in [first_name, last_name] if part)
+    if full_name:
+        return full_name
+    if username:
+        return f"@{username}"
+    return fallback
+
+
+def _parse_str(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    return ""

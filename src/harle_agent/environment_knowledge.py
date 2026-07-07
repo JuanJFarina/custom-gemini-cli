@@ -1,14 +1,29 @@
-import json
+from asyncio import Lock
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from time import monotonic
 from typing import cast
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import urlopen
+
+import httpx
 
 ROSARIO_LATITUDE = -32.9468
 ROSARIO_LONGITUDE = -60.6393
 ROSARIO_TIMEZONE = timezone(timedelta(hours=-3), name="ART")
 WEATHER_TIMEOUT_SECONDS = 5
+WEATHER_CACHE_SECONDS = 600
+WEATHER_FAILURE_CACHE_SECONDS = 60
+WEATHER_UNAVAILABLE = "Current weather is unavailable."
+
+
+@dataclass(frozen=True)
+class _WeatherCache:
+    value: str
+    expires_at: float
+
+
+_WEATHER_CACHE: _WeatherCache | None = None
+_WEATHER_CACHE_LOCK = Lock()
 
 
 def get_current_time_and_date() -> str:
@@ -16,7 +31,38 @@ def get_current_time_and_date() -> str:
     return now.strftime("%A, %Y-%m-%d %H:%M %Z")
 
 
-def get_current_weather() -> str:
+async def get_current_weather() -> str:
+    global _WEATHER_CACHE  # pylint: disable=global-statement
+
+    cached_weather = _cached_weather()
+    if cached_weather is not None:
+        return cached_weather
+
+    async with _WEATHER_CACHE_LOCK:
+        cached_weather = _cached_weather()
+        if cached_weather is not None:
+            return cached_weather
+
+        weather = await _fetch_current_weather()
+        cache_seconds = (
+            WEATHER_FAILURE_CACHE_SECONDS
+            if weather == WEATHER_UNAVAILABLE
+            else WEATHER_CACHE_SECONDS
+        )
+        _WEATHER_CACHE = _WeatherCache(
+            value=weather,
+            expires_at=monotonic() + cache_seconds,
+        )
+        return weather
+
+
+def _cached_weather() -> str | None:
+    if _WEATHER_CACHE is None or _WEATHER_CACHE.expires_at <= monotonic():
+        return None
+    return _WEATHER_CACHE.value
+
+
+async def _fetch_current_weather() -> str:  # pylint: disable=too-many-locals
     query = urlencode(
         {
             "latitude": ROSARIO_LATITUDE,
@@ -37,10 +83,15 @@ def get_current_weather() -> str:
     url = f"https://api.open-meteo.com/v1/forecast?{query}"
 
     try:
-        with urlopen(url, timeout=WEATHER_TIMEOUT_SECONDS) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
-        return "Current weather is unavailable."
+        async with httpx.AsyncClient(timeout=WEATHER_TIMEOUT_SECONDS) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            payload = response.json()
+    except (httpx.HTTPError, ValueError):
+        return WEATHER_UNAVAILABLE
+
+    if not isinstance(payload, dict):
+        return WEATHER_UNAVAILABLE
 
     current = payload.get("current") or {}
     units = payload.get("current_units") or {}
@@ -53,7 +104,7 @@ def get_current_weather() -> str:
     weather_code = current.get("weather_code")
 
     if temperature is None:
-        return "Current weather is unavailable."
+        return WEATHER_UNAVAILABLE
 
     parts = [
         _format_value(

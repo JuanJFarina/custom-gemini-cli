@@ -4,7 +4,12 @@ import httpx
 
 from harle_agent.agent import Harle
 from harle_agent.models import HarleStores, HarleToolStore
-from harle_agent.stores import SQLiteConversationStore
+from harle_agent.stores import (
+    ConversationStore,
+    PostgresConversationStore,
+    SQLiteConversationStore,
+)
+from harle_api.runtime import ApiRuntime
 from harle_api.settings import ApiSettings, get_settings
 from harle_api.telegram import (
     IncomingTelegramMessage,
@@ -16,6 +21,7 @@ from harle_api.telegram import (
 async def process_telegram_message(
     message: IncomingTelegramMessage,
     settings: ApiSettings | None = None,
+    runtime: ApiRuntime | None = None,
 ) -> None:
     settings = settings or get_settings()
 
@@ -30,7 +36,11 @@ async def process_telegram_message(
     saving_task: Task[None] | None = None
 
     try:
-        response, saving_task = await _generate_response(message, settings)
+        response, saving_task = await _generate_response(
+            message,
+            settings,
+            runtime=runtime,
+        )
     except Exception as exc:  # pylint: disable=broad-exception-caught
         response = f"Gemini request failed: {exc}"
 
@@ -46,13 +56,14 @@ async def process_telegram_message(
 async def _generate_response(
     message: IncomingTelegramMessage,
     settings: ApiSettings | None = None,
+    runtime: ApiRuntime | None = None,
 ) -> tuple[str, Task[None]]:
     settings = settings or get_settings()
     harle_stores = HarleStores(
-        conversation_store=SQLiteConversationStore(
-            database_path=settings.RESOLVED_SQLITE_PATH,
-            chat_id=message.chat_id,
-            user_id=message.user_id,
+        conversation_store=_conversation_store(
+            message=message,
+            settings=settings,
+            runtime=runtime,
         ),
         tool_store=HarleToolStore(),
     )
@@ -60,3 +71,27 @@ async def _generate_response(
         stores=harle_stores,
     )
     return await harle.call(message.text)
+
+
+def _conversation_store(
+    *,
+    message: IncomingTelegramMessage,
+    settings: ApiSettings,
+    runtime: ApiRuntime | None,
+) -> ConversationStore:
+    if settings.POSTGRES_DATABASE_URL:
+        if runtime is None or runtime.postgres is None:
+            raise RuntimeError("Postgres runtime is not initialized.")
+
+        return PostgresConversationStore(
+            pool=runtime.postgres.pool,
+            user_id=runtime.postgres.owner_user_id,
+            user_name=runtime.postgres.owner_user_name,
+            telegram_chat_id=message.chat_id,
+        )
+
+    return SQLiteConversationStore(
+        database_path=settings.RESOLVED_SQLITE_PATH,
+        chat_id=message.chat_id,
+        user_id=message.user_id,
+    )

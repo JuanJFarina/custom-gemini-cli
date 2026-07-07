@@ -9,6 +9,7 @@ description = "Lightweight Gemini CLI with Google Search grounding"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "asyncpg",
     "fastapi",
     "google-genai",
     "google-auth",
@@ -65,6 +66,7 @@ warn_unused_configs = true
 
 [[tool.mypy.overrides]]
 module = [
+    "asyncpg.*",
     "google.*",
     "gspread.*",
 ]

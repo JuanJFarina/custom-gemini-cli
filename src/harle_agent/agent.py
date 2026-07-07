@@ -1,5 +1,5 @@
 import re
-from asyncio import Task, create_task
+from asyncio import Task, create_task, gather
 from pathlib import Path
 from time import time
 from typing import Any
@@ -48,10 +48,15 @@ class Harle(BaseModel):
 
     async def call(self, prompt: str) -> tuple[str, Task[None]]:
         start_time = time()
-        log.info("Loading conversations")
-        conversations = await self.stores.conversation_store.load()
+        log.info("Loading conversations and current weather")
+        conversations_task = create_task(self.stores.conversation_store.load())
+        weather_task = create_task(get_current_weather())
+        conversations, current_weather = await gather(conversations_task, weather_task)
         log.info("Building system instruction")
-        system_instruction = self._build_system_instruction(conversations)
+        system_instruction = self._build_system_instruction(
+            conversations,
+            current_weather=current_weather,
+        )
         log.info("Starting reason and act loop")
         response: str = await self._reason_and_act(
             prompt=prompt,
@@ -120,7 +125,11 @@ class Harle(BaseModel):
             )
         )
 
-        content = gemini_response.candidates[0].content
+        candidates = gemini_response.candidates or []
+        if not candidates or candidates[0].content is None:
+            raise ValueError("Gemini response did not include content.")
+
+        content = candidates[0].content
         parts = content.parts or []
         text_parts: list[str] = []
 
@@ -172,13 +181,18 @@ class Harle(BaseModel):
             {tool_result.result}
             """
 
-    def _build_system_instruction(self, latest_conversations: str) -> str:
+    def _build_system_instruction(
+        self,
+        latest_conversations: str,
+        *,
+        current_weather: str,
+    ) -> str:
         tools_prompt = "\n".join([tool.prompt for tool in TOOLS])
         system_instruction = SYSTEM_PROMPT.format(
             tools=tools_prompt,
             juan_personal_history_summary=_load_personal_history(PERSONAL_HISTORY_PATH),
             current_time_and_date=get_current_time_and_date(),
-            current_weather=get_current_weather(),
+            current_weather=current_weather,
             latest_conversations=latest_conversations,
         )
         print(f"\n---------\n{system_instruction}\n---------\n")

@@ -11,6 +11,10 @@ class ApiSettings(Settings):
     TELEGRAM_BOT_TOKEN: str
     TELEGRAM_ALLOWED_USER_ID: int
     TELEGRAM_WEBHOOK_SECRET: str
+    TELEGRAM_USER_NAME: str | None = "Juan José Farina"
+    POSTGRES_DATABASE_URL: str | None = None
+    POSTGRES_POOL_MIN_SIZE: int = 1
+    POSTGRES_POOL_MAX_SIZE: int = 5
     SQLITE_PATH: str | None = None
     VERCEL: bool = False
 
