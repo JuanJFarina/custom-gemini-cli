@@ -92,4 +92,4 @@ disable = [
 fail-under = 10.0
 
 [tool.vercel]
-entrypoint = "src.harle_api.app:app"
+entrypoint = "src.harle_api.app:harle_app"
