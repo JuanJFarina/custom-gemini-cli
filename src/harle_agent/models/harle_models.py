@@ -20,7 +20,13 @@ class HarleResponse(BaseModel):
 
 class HarleToolCall(BaseModel):
     action: Literal["call_tool"]
-    tool_name: Literal["add_one_time_transaction", "add_in_installments_transaction"]
+    tool_name: Literal[
+        "add_one_time_transaction",
+        "add_in_installments_transaction",
+        "get_day_expenses",
+        "get_month_expenses",
+        "remove_or_update_transaction",
+    ]
     tool_args: dict[str, Any]
 
 
