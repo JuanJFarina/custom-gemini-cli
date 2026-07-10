@@ -13,18 +13,18 @@ from .utils import (
 async def remove_or_update_transaction(args: dict[str, Any]) -> HarleToolResult:  # pylint: disable=too-many-locals
     sheets_client = GoogleSheetsClient()
     validated_args = RemoveOrUpdateTransactionArgs(**args)
-    previous_transaction = validated_args.previous_transaction
+    old_transaction = validated_args.old_transaction
     new_transaction = validated_args.new_transaction
 
-    previous_sheet = MONTH_SHEET_MAPPING[previous_transaction.month]
-    previous_cell = _transaction_cell(previous_transaction)
+    previous_sheet = MONTH_SHEET_MAPPING[old_transaction.month]
+    previous_cell = _transaction_cell(old_transaction)
     old_previous_formula = await sheets_client.get_formula(
         sheet_name=previous_sheet,
         cell=previous_cell,
     )
     removal_result = sheets_client.build_formula_without_amount(
         old_formula=old_previous_formula,
-        amount=previous_transaction.amount,
+        amount=_signed_amount(old_transaction),
     )
     if not removal_result.removed:
         return HarleToolResult(
@@ -32,7 +32,7 @@ async def remove_or_update_transaction(args: dict[str, Any]) -> HarleToolResult:
             result={
                 "ok": False,
                 "reason": "No matching transaction amount was found.",
-                "previous_transaction": previous_transaction.model_dump(),
+                "old_transaction": old_transaction.model_dump(),
                 "previous_cell": previous_cell,
                 "previous_formula": old_previous_formula,
             },
@@ -45,7 +45,7 @@ async def remove_or_update_transaction(args: dict[str, Any]) -> HarleToolResult:
             formula=removal_result.formula,
         )
         return _result(
-            previous_transaction=previous_transaction,
+            old_transaction=old_transaction,
             new_transaction=None,
             duplicate_matches=removal_result.duplicate_matches,
             updates=[
@@ -66,7 +66,7 @@ async def remove_or_update_transaction(args: dict[str, Any]) -> HarleToolResult:
         final_formula = sheets_client.build_updated_formula(
             old_formula=removal_result.formula,
             amount=new_transaction.amount,
-            refund=False,
+            refund=new_transaction.is_refund,
         )
         await sheets_client.update_formula(
             sheet_name=previous_sheet,
@@ -94,7 +94,7 @@ async def remove_or_update_transaction(args: dict[str, Any]) -> HarleToolResult:
         final_new_formula = sheets_client.build_updated_formula(
             old_formula=old_new_formula,
             amount=new_transaction.amount,
-            refund=False,
+            refund=new_transaction.is_refund,
         )
         await sheets_client.update_formula(
             sheet_name=new_sheet,
@@ -117,7 +117,7 @@ async def remove_or_update_transaction(args: dict[str, Any]) -> HarleToolResult:
         ]
 
     return _result(
-        previous_transaction=previous_transaction,
+        old_transaction=old_transaction,
         new_transaction=new_transaction,
         duplicate_matches=removal_result.duplicate_matches,
         updates=updates,
@@ -128,9 +128,13 @@ def _transaction_cell(transaction: Transaction) -> str:
     return f"{transaction.category}{transaction.day + 1}"
 
 
+def _signed_amount(transaction: Transaction) -> int:
+    return -transaction.amount if transaction.is_refund else transaction.amount
+
+
 def _result(
     *,
-    previous_transaction: Transaction,
+    old_transaction: Transaction,
     new_transaction: Transaction | None,
     duplicate_matches: int,
     updates: list[dict[str, Any]],
@@ -139,7 +143,7 @@ def _result(
         called_tool_name="remove_or_update_transaction",
         result={
             "ok": True,
-            "previous_transaction": previous_transaction.model_dump(),
+            "old_transaction": old_transaction.model_dump(),
             "new_transaction": (
                 new_transaction.model_dump() if new_transaction is not None else None
             ),
@@ -157,26 +161,30 @@ def _result(
 REMOVE_OR_UPDATE_TRANSACTION_PROMPT = """
 ## "remove_or_update_transaction" tool
 
-- Tool for removing or updating one existing transaction in the expenses spreadsheet.
-- This tool removes one matching positive amount from the previous transaction's day/category cell.
-- If "new_transaction" is provided, the tool adds that new transaction after removing the previous one.
-- If multiple equal amounts exist in the same cell, the tool removes the first matching amount.
+- Tool for removing or updating one existing transaction (positive or refund) in the expenses spreadsheet.
 - Args:
-  - "previous_transaction": Object with "amount", "category", "month", and "day".
-  - "new_transaction": Object with "amount", "category", "month", and "day", or null to only remove the transaction.
-- Example for changing a transaction from July 5th category "E" to July 6th category "G":
+  - "old_transaction": Object following the "Transaction" model:
+    - "amount": The amount of the transaction.
+    - "category": The category of the transaction.
+    - "month": The month of the transaction (1-12).
+    - "day": The day of the transaction (1-31).
+    - "is_refund": Optional. Use "is_refund": true when the existing transaction is a refund/negative adjustment.
+  - "new_transaction": Optional object following the "Transaction" model or null to only remove the transaction.
+- Example for changing a regular transaction into a refund:
 {
-  "previous_transaction": {
+  "old_transaction": {
     "amount": 10000,
     "category": "E",
     "month": 7,
-    "day": 5
+    "day": 5,
+    "is_refund": false
   },
   "new_transaction": {
     "amount": 10000,
-    "category": "G",
+    "category": "E",
     "month": 7,
-    "day": 6
+    "day": 5,
+    "is_refund": true
   }
 }"""
 

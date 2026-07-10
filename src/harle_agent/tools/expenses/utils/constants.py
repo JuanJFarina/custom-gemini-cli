@@ -17,7 +17,7 @@ MONTH_SHEET_MAPPING = {
     12: "diciembre",
 }
 
-FORMULA_AMOUNT_TERM = r"(?:\d+(?:\.\d+)?|\(\d+(?:\.\d+)? \* \d+ / \d+\))"
+FORMULA_AMOUNT_TERM = r"(?:\d+(?:\.\d+)?|\(\d+(?:\.\d+)?\s*\*\s*\d+\s*/\s*\d+\))"
 SIMPLE_FORMULA_PATTERN = re.compile(
     rf"^=-?{FORMULA_AMOUNT_TERM}(?:[+-]{FORMULA_AMOUNT_TERM})*$",
 )

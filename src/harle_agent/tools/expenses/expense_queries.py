@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from harle_agent.models import HarleTool, HarleToolResult
@@ -12,11 +13,17 @@ from .utils import (
 
 FIRST_DAY_ROW = 2
 LAST_DAY_ROW = 32
+EXPENSES_TIMEZONE = timezone(timedelta(hours=-3), name="ART")
 
 
-async def get_day_expenses(args: dict[str, Any]) -> HarleToolResult:
+async def get_day_expenses(args: dict[str, Any] | None = None) -> HarleToolResult:
+    args = args or {}
     sheets_client = GoogleSheetsClient()
-    validated_args = DayExpensesArgs(**args)
+    today = _current_expenses_date()
+    validated_args = DayExpensesArgs(
+        day=args.get("day", today.day),
+        month=args.get("month", today.month),
+    )
     sheet_name = MONTH_SHEET_MAPPING[validated_args.month]
     row_number = validated_args.day + 1
     formulas = await sheets_client.get_formulas(
@@ -43,9 +50,11 @@ async def get_day_expenses(args: dict[str, Any]) -> HarleToolResult:
     )
 
 
-async def get_month_expenses(args: dict[str, Any]) -> HarleToolResult:
+async def get_month_expenses(args: dict[str, Any] | None = None) -> HarleToolResult:  # pylint: disable=too-many-locals
+    args = args or {}
     sheets_client = GoogleSheetsClient()
-    validated_args = MonthExpensesArgs(**args)
+    today = _current_expenses_date()
+    validated_args = MonthExpensesArgs(month=args.get("month", today.month))
     sheet_name = MONTH_SHEET_MAPPING[validated_args.month]
     formulas = await sheets_client.get_formulas(
         sheet_name=sheet_name,
@@ -125,30 +134,38 @@ def _sum_expenses(expenses: list[dict[str, Any]]) -> int | float:
     return sum(expense["amount"] for expense in expenses)
 
 
+def _current_expenses_date() -> datetime:
+    return datetime.now(EXPENSES_TIMEZONE)
+
+
 GET_DAY_EXPENSES_PROMPT = """
 ## "get_day_expenses" tool
 
-- Tool for reading Juan's expenses for one day from the expenses spreadsheet.
+- Tool for reading all the transactions for one day from the expenses spreadsheet.
 - Args:
-  - "day": Integer of the day to read, from 1 to 31.
-  - "month": Integer of the month to read, from 1 to 12.
+  - "day": Optional integer of the day to read, from 1 to 31. Defaults to the current day.
+  - "month": Optional integer of the month to read, from 1 to 12. Defaults to the current month.
 - Example:
 {
   "day": 5,
   "month": 7
-}"""
+}
+- No args example:
+{}"""
 
 
 GET_MONTH_EXPENSES_PROMPT = """
 ## "get_month_expenses" tool
 
-- Tool for reading Juan's expenses for one month from the expenses spreadsheet.
+- Tool for reading all the transactions for one entire month from the expenses spreadsheet.
 - Args:
-  - "month": Integer of the month to read, from 1 to 12.
+  - "month": Optional integer of the month to read, from 1 to 12. Defaults to the current month.
 - Example:
 {
   "month": 7
-}"""
+}
+- No args example:
+{}"""
 
 
 GET_DAY_EXPENSES_TOOL = HarleTool(

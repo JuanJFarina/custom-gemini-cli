@@ -263,7 +263,7 @@ def _amount_term_value(amount_term: str) -> Decimal:
         return Decimal(amount_term)
 
     terms = re.fullmatch(
-        r"\((?P<amount>\d+(?:\.\d+)?) \* (?P<numerator>\d+) / (?P<denominator>\d+)\)",
+        r"\((?P<amount>\d+(?:\.\d+)?)\s*\*\s*(?P<numerator>\d+)\s*/\s*(?P<denominator>\d+)\)",
         amount_term,
     )
     if terms is None:

@@ -20,7 +20,7 @@ class TransactionArgs(BaseModel):
 
 
 class Transaction(TransactionArgs):
-    pass
+    is_refund: bool = False
 
 
 class DayExpensesArgs(BaseModel):
@@ -45,5 +45,5 @@ class MonthExpensesArgs(BaseModel):
 
 
 class RemoveOrUpdateTransactionArgs(BaseModel):
-    previous_transaction: Transaction
+    old_transaction: Transaction
     new_transaction: Transaction | None = None
