@@ -32,7 +32,7 @@ from .retry_decorator import retry
 from .settings import PERSONAL_HISTORY_PATH, get_agent_settings
 from .tools import TOOLS, show_tool_results
 
-Settings = get_agent_settings()
+SETTINGS = get_agent_settings()
 
 
 class Harle(BaseModel):
@@ -74,7 +74,7 @@ class Harle(BaseModel):
         tool_results: list[HarleToolResult] | None = None,
     ) -> str:
         tool_results = tool_results or []
-        if len(tool_results) >= Settings.MAX_LOOPS:
+        if len(tool_results) >= SETTINGS.MAX_LOOPS:
             return (
                 "I'm looping infinitely, these are the tool results so far: "
                 f"{show_tool_results(tool_results)}"
@@ -155,7 +155,7 @@ class Harle(BaseModel):
 
     @retry
     async def _call_tool(self, tool_call: HarleToolCall) -> HarleToolResult:
-        tool = self.stores.tool_store.get(tool_call.tool_name)  # type: ignore[arg-type]
+        tool = self.stores.tool_store.get(tool_call.tool_name)
         result = await tool.func(tool_call.tool_args)
         log.info(f"Tool {tool.name} called successfully")
         return result

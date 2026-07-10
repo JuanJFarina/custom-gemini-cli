@@ -221,3 +221,5 @@ __marimo__/
 data/conversations/*.json
 data/*.sqlite3
 data/*.sqlite3-*
+
+.cursor/

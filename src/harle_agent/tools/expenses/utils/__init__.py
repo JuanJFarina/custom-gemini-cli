@@ -1,4 +1,9 @@
-from .constants import CATEGORY_COLUMNS, MONTH_SHEET_MAPPING, SIMPLE_FORMULA_PATTERN
+from .constants import (
+    CATEGORY_COLUMNS,
+    MONTH_SHEET_MAPPING,
+    SIMPLE_FORMULA_PATTERN,
+    TOTAL_COLUMN,
+)
 from .google_sheets import GoogleSheetsClient, TargetYear
 from .shared_models import (
     DayExpensesArgs,
@@ -19,4 +24,5 @@ __all__ = [
     "TransactionArgs",
     "MONTH_SHEET_MAPPING",
     "TargetYear",
+    "TOTAL_COLUMN",
 ]

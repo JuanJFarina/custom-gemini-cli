@@ -1,6 +1,6 @@
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from harle_agent.settings import get_agent_settings
 from harle_agent.stores.protocol import ConversationStore
@@ -30,9 +30,12 @@ class HarleToolCall(BaseModel):
     tool_args: dict[str, Any]
 
 
-HarleThought = HarleResponse | HarleToolCall
+HarleThought = Annotated[
+    HarleResponse | HarleToolCall,
+    Field(discriminator="action"),
+]
 
-HarleThoughtAdapter = TypeAdapter(HarleThought, config={"discriminator": "action"})  # type: ignore[call-overload]
+HarleThoughtAdapter: TypeAdapter[HarleThought] = TypeAdapter(HarleThought)
 
 
 class HarleStores(BaseModel):

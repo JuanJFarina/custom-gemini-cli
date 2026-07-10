@@ -4,6 +4,7 @@ import httpx
 
 from harle_agent.agent import Harle
 from harle_agent.models import HarleStores, HarleToolStore
+from harle_agent.retry_decorator import ASSISTANT_FAILURES
 from harle_agent.stores import (
     ConversationStore,
     PostgresConversationStore,
@@ -41,7 +42,7 @@ async def process_telegram_message(
             settings,
             runtime=runtime,
         )
-    except Exception as exc:  # pylint: disable=broad-exception-caught
+    except ASSISTANT_FAILURES as exc:
         response = f"Gemini request failed: {exc}"
 
     await send_message(

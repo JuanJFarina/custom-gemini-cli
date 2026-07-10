@@ -1,4 +1,6 @@
-from typing import Any
+from collections.abc import Mapping
+
+from pydantic import BaseModel
 
 from harle_agent.models import HarleTool, HarleToolResult
 
@@ -10,126 +12,201 @@ from .utils import (
 )
 
 
-async def remove_or_update_transaction(args: dict[str, Any]) -> HarleToolResult:  # pylint: disable=too-many-locals
+class TransactionLocation(BaseModel):
+    sheet_name: str
+    cell: str
+
+
+class FormulaUpdate(BaseModel):
+    sheet_modified: str
+    cell: str
+    old_formula: str
+    new_formula: str
+
+
+class TransactionRemoval(BaseModel):
+    old_transaction: Transaction
+    location: TransactionLocation
+    old_formula: str
+    formula_after_removal: str
+    removed: bool
+    duplicate_matches: int
+
+
+async def remove_or_update_transaction(args: Mapping[str, object]) -> HarleToolResult:
     sheets_client = GoogleSheetsClient()
     validated_args = RemoveOrUpdateTransactionArgs(**args)
-    old_transaction = validated_args.old_transaction
-    new_transaction = validated_args.new_transaction
-
-    previous_sheet = MONTH_SHEET_MAPPING[old_transaction.month]
-    previous_cell = _transaction_cell(old_transaction)
-    old_previous_formula = await sheets_client.get_formula(
-        sheet_name=previous_sheet,
-        cell=previous_cell,
+    removal = await _transaction_removal(
+        sheets_client=sheets_client,
+        old_transaction=validated_args.old_transaction,
     )
-    removal_result = sheets_client.build_formula_without_amount(
-        old_formula=old_previous_formula,
-        amount=_signed_amount(old_transaction),
+
+    if not removal.removed:
+        return _not_found_result(removal)
+
+    updates = await _transaction_updates(
+        sheets_client=sheets_client,
+        removal=removal,
+        new_transaction=validated_args.new_transaction,
     )
-    if not removal_result.removed:
-        return HarleToolResult(
-            called_tool_name="remove_or_update_transaction",
-            result={
-                "ok": False,
-                "reason": "No matching transaction amount was found.",
-                "old_transaction": old_transaction.model_dump(),
-                "previous_cell": previous_cell,
-                "previous_formula": old_previous_formula,
-            },
-        )
-
-    if new_transaction is None:
-        await sheets_client.update_formula(
-            sheet_name=previous_sheet,
-            cell=previous_cell,
-            formula=removal_result.formula,
-        )
-        return _result(
-            old_transaction=old_transaction,
-            new_transaction=None,
-            duplicate_matches=removal_result.duplicate_matches,
-            updates=[
-                {
-                    "sheet_modified": previous_sheet,
-                    "cell": previous_cell,
-                    "old_formula": old_previous_formula,
-                    "new_formula": removal_result.formula,
-                },
-            ],
-        )
-
-    new_sheet = MONTH_SHEET_MAPPING[new_transaction.month]
-    new_cell = _transaction_cell(new_transaction)
-    same_cell = previous_sheet == new_sheet and previous_cell == new_cell
-
-    if same_cell:
-        final_formula = sheets_client.build_updated_formula(
-            old_formula=removal_result.formula,
-            amount=new_transaction.amount,
-            refund=new_transaction.is_refund,
-        )
-        await sheets_client.update_formula(
-            sheet_name=previous_sheet,
-            cell=previous_cell,
-            formula=final_formula,
-        )
-        updates = [
-            {
-                "sheet_modified": previous_sheet,
-                "cell": previous_cell,
-                "old_formula": old_previous_formula,
-                "new_formula": final_formula,
-            },
-        ]
-    else:
-        await sheets_client.update_formula(
-            sheet_name=previous_sheet,
-            cell=previous_cell,
-            formula=removal_result.formula,
-        )
-        old_new_formula = await sheets_client.get_formula(
-            sheet_name=new_sheet,
-            cell=new_cell,
-        )
-        final_new_formula = sheets_client.build_updated_formula(
-            old_formula=old_new_formula,
-            amount=new_transaction.amount,
-            refund=new_transaction.is_refund,
-        )
-        await sheets_client.update_formula(
-            sheet_name=new_sheet,
-            cell=new_cell,
-            formula=final_new_formula,
-        )
-        updates = [
-            {
-                "sheet_modified": previous_sheet,
-                "cell": previous_cell,
-                "old_formula": old_previous_formula,
-                "new_formula": removal_result.formula,
-            },
-            {
-                "sheet_modified": new_sheet,
-                "cell": new_cell,
-                "old_formula": old_new_formula,
-                "new_formula": final_new_formula,
-            },
-        ]
-
     return _result(
-        old_transaction=old_transaction,
-        new_transaction=new_transaction,
-        duplicate_matches=removal_result.duplicate_matches,
+        old_transaction=validated_args.old_transaction,
+        new_transaction=validated_args.new_transaction,
+        duplicate_matches=removal.duplicate_matches,
         updates=updates,
     )
 
 
-def _transaction_cell(transaction: Transaction) -> str:
-    return f"{transaction.category}{transaction.day + 1}"
+async def _transaction_removal(
+    *,
+    sheets_client: GoogleSheetsClient,
+    old_transaction: Transaction,
+) -> TransactionRemoval:
+    location = _transaction_location(old_transaction)
+    old_formula = await sheets_client.get_formula(
+        sheet_name=location.sheet_name,
+        cell=location.cell,
+    )
+    removal_result = sheets_client.build_formula_without_amount(
+        old_formula=old_formula,
+        amount=_signed_amount(old_transaction),
+    )
+    return TransactionRemoval(
+        old_transaction=old_transaction,
+        location=location,
+        old_formula=old_formula,
+        formula_after_removal=removal_result.formula,
+        removed=removal_result.removed,
+        duplicate_matches=removal_result.duplicate_matches,
+    )
+
+
+async def _transaction_updates(
+    *,
+    sheets_client: GoogleSheetsClient,
+    removal: TransactionRemoval,
+    new_transaction: Transaction | None,
+) -> list[FormulaUpdate]:
+    if new_transaction is None:
+        return [
+            await _update_formula(
+                sheets_client=sheets_client,
+                location=removal.location,
+                old_formula=removal.old_formula,
+                new_formula=removal.formula_after_removal,
+            ),
+        ]
+
+    new_location = _transaction_location(new_transaction)
+    if removal.location == new_location:
+        return [
+            await _same_cell_update(
+                sheets_client=sheets_client,
+                removal=removal,
+                new_transaction=new_transaction,
+            ),
+        ]
+
+    return await _moved_transaction_updates(
+        sheets_client=sheets_client,
+        removal=removal,
+        new_transaction=new_transaction,
+        new_location=new_location,
+    )
+
+
+async def _same_cell_update(
+    *,
+    sheets_client: GoogleSheetsClient,
+    removal: TransactionRemoval,
+    new_transaction: Transaction,
+) -> FormulaUpdate:
+    final_formula = sheets_client.build_updated_formula(
+        old_formula=removal.formula_after_removal,
+        amount=new_transaction.amount,
+        refund=new_transaction.is_refund,
+    )
+    return await _update_formula(
+        sheets_client=sheets_client,
+        location=removal.location,
+        old_formula=removal.old_formula,
+        new_formula=final_formula,
+    )
+
+
+async def _moved_transaction_updates(
+    *,
+    sheets_client: GoogleSheetsClient,
+    removal: TransactionRemoval,
+    new_transaction: Transaction,
+    new_location: TransactionLocation,
+) -> list[FormulaUpdate]:
+    removal_update = await _update_formula(
+        sheets_client=sheets_client,
+        location=removal.location,
+        old_formula=removal.old_formula,
+        new_formula=removal.formula_after_removal,
+    )
+    old_new_formula = await sheets_client.get_formula(
+        sheet_name=new_location.sheet_name,
+        cell=new_location.cell,
+    )
+    final_new_formula = sheets_client.build_updated_formula(
+        old_formula=old_new_formula,
+        amount=new_transaction.amount,
+        refund=new_transaction.is_refund,
+    )
+    new_update = await _update_formula(
+        sheets_client=sheets_client,
+        location=new_location,
+        old_formula=old_new_formula,
+        new_formula=final_new_formula,
+    )
+    return [removal_update, new_update]
+
+
+async def _update_formula(
+    *,
+    sheets_client: GoogleSheetsClient,
+    location: TransactionLocation,
+    old_formula: str,
+    new_formula: str,
+) -> FormulaUpdate:
+    await sheets_client.update_formula(
+        sheet_name=location.sheet_name,
+        cell=location.cell,
+        formula=new_formula,
+    )
+    return FormulaUpdate(
+        sheet_modified=location.sheet_name,
+        cell=location.cell,
+        old_formula=old_formula,
+        new_formula=new_formula,
+    )
+
+
+def _transaction_location(transaction: Transaction) -> TransactionLocation:
+    return TransactionLocation(
+        sheet_name=MONTH_SHEET_MAPPING[transaction.month],
+        cell=f"{transaction.category}{transaction.day + 1}",
+    )
 
 
 def _signed_amount(transaction: Transaction) -> int:
     return -transaction.amount if transaction.is_refund else transaction.amount
+
+
+def _not_found_result(removal: TransactionRemoval) -> HarleToolResult:
+    return HarleToolResult(
+        called_tool_name="remove_or_update_transaction",
+        result={
+            "ok": False,
+            "reason": "No matching transaction amount was found.",
+            "old_transaction": removal.old_transaction.model_dump(),
+            "previous_cell": removal.location.cell,
+            "previous_formula": removal.old_formula,
+        },
+    )
 
 
 def _result(
@@ -137,7 +214,7 @@ def _result(
     old_transaction: Transaction,
     new_transaction: Transaction | None,
     duplicate_matches: int,
-    updates: list[dict[str, Any]],
+    updates: list[FormulaUpdate],
 ) -> HarleToolResult:
     return HarleToolResult(
         called_tool_name="remove_or_update_transaction",
@@ -153,7 +230,7 @@ def _result(
                 if duplicate_matches > 1
                 else None
             ),
-            "updates": updates,
+            "updates": [update.model_dump() for update in updates],
         },
     )
 

@@ -5,6 +5,7 @@ from sys import stderr
 from harle_agent import __version__
 from harle_agent.agent import Harle
 from harle_agent.models import HarleStores, HarleToolStore
+from harle_agent.retry_decorator import ASSISTANT_FAILURES
 from harle_agent.stores import FileConversationStore
 
 
@@ -33,7 +34,7 @@ def main() -> int:
 
     try:
         asyncio.run(call_harle(harle, prompt))
-    except Exception as exc:  # pylint: disable=broad-exception-caught
+    except ASSISTANT_FAILURES as exc:
         print(f"Gemini request failed: {exc}", file=stderr)
         return 1
 

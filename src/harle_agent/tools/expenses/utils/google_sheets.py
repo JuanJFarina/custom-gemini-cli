@@ -2,10 +2,11 @@ import asyncio
 import re
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Literal, TypeAlias
 
 import gspread
 from google.oauth2.service_account import Credentials
+from gspread.spreadsheet import Spreadsheet
 from gspread.utils import ValueInputOption, ValueRenderOption
 from pydantic import BaseModel, Field, PrivateAttr
 
@@ -18,6 +19,13 @@ from .constants import (
 )
 
 TargetYear = Literal["current_year", "next_year"]
+SheetName: TypeAlias = str
+CellReference: TypeAlias = str
+RangeName: TypeAlias = str
+FormulaText: TypeAlias = str
+FormulaRows: TypeAlias = list[list[FormulaText]]
+SheetValueRows: TypeAlias = list[list[object]]
+JsonAmount: TypeAlias = int | float
 FORMULA_TERM_PATTERN = re.compile(
     rf"(?P<operator>[+-]?)(?P<amount>{FORMULA_AMOUNT_TERM})",
 )
@@ -29,28 +37,31 @@ class FormulaTerm:
     signed_amount: Decimal
 
 
+FormulaTerms: TypeAlias = list[FormulaTerm]
+
+
 @dataclass(frozen=True)
 class FormulaRemovalResult:
-    formula: str
+    formula: FormulaText
     removed: bool
     duplicate_matches: int
 
 
 class GoogleSheetsClient(BaseModel):
     settings: AgentSettings = Field(default_factory=get_agent_settings)
-    _spreadsheets: dict[TargetYear, Any] = PrivateAttr(
+    _spreadsheets: dict[TargetYear, Spreadsheet] = PrivateAttr(
         default_factory=dict,
     )
 
     @property
-    def spreadsheet(self) -> Any:
+    def spreadsheet(self) -> Spreadsheet:
         return self.get_spreadsheet()
 
     def get_spreadsheet(
         self,
         *,
         target_spreadsheet: TargetYear = "current_year",
-    ) -> Any:
+    ) -> Spreadsheet:
         if target_spreadsheet not in self._spreadsheets:
             self._spreadsheets[target_spreadsheet] = self._open_spreadsheet(
                 target_spreadsheet=target_spreadsheet,
@@ -61,7 +72,7 @@ class GoogleSheetsClient(BaseModel):
         self,
         *,
         target_spreadsheet: TargetYear,
-    ) -> Any:
+    ) -> Spreadsheet:
         credentials = Credentials.from_service_account_info(
             self.settings.GOOGLE_SERVICE_ACCOUNT,
             scopes=GOOGLE_SHEETS_SCOPES,
@@ -87,10 +98,10 @@ class GoogleSheetsClient(BaseModel):
     async def get_formula(
         self,
         *,
-        sheet_name: str,
-        cell: str,
+        sheet_name: SheetName,
+        cell: CellReference,
         target_spreadsheet: TargetYear = "current_year",
-    ) -> str:
+    ) -> FormulaText:
         return await asyncio.to_thread(
             self._get_formula_sync,
             sheet_name=sheet_name,
@@ -101,10 +112,10 @@ class GoogleSheetsClient(BaseModel):
     def _get_formula_sync(
         self,
         *,
-        sheet_name: str,
-        cell: str,
+        sheet_name: SheetName,
+        cell: CellReference,
         target_spreadsheet: TargetYear,
-    ) -> str:
+    ) -> FormulaText:
         worksheet = self.get_spreadsheet(
             target_spreadsheet=target_spreadsheet,
         ).worksheet(sheet_name)
@@ -117,10 +128,10 @@ class GoogleSheetsClient(BaseModel):
     async def get_formulas(
         self,
         *,
-        sheet_name: str,
-        range_name: str,
+        sheet_name: SheetName,
+        range_name: RangeName,
         target_spreadsheet: TargetYear = "current_year",
-    ) -> list[list[str]]:
+    ) -> FormulaRows:
         return await asyncio.to_thread(
             self._get_formulas_sync,
             sheet_name=sheet_name,
@@ -131,10 +142,10 @@ class GoogleSheetsClient(BaseModel):
     def _get_formulas_sync(
         self,
         *,
-        sheet_name: str,
-        range_name: str,
+        sheet_name: SheetName,
+        range_name: RangeName,
         target_spreadsheet: TargetYear,
-    ) -> list[list[str]]:
+    ) -> FormulaRows:
         worksheet = self.get_spreadsheet(
             target_spreadsheet=target_spreadsheet,
         ).worksheet(sheet_name)
@@ -144,12 +155,42 @@ class GoogleSheetsClient(BaseModel):
         )
         return [[str(value or "") for value in row] for row in values]
 
+    async def get_values(
+        self,
+        *,
+        sheet_name: SheetName,
+        range_name: RangeName,
+        target_spreadsheet: TargetYear = "current_year",
+    ) -> SheetValueRows:
+        return await asyncio.to_thread(
+            self._get_values_sync,
+            sheet_name=sheet_name,
+            range_name=range_name,
+            target_spreadsheet=target_spreadsheet,
+        )
+
+    def _get_values_sync(
+        self,
+        *,
+        sheet_name: SheetName,
+        range_name: RangeName,
+        target_spreadsheet: TargetYear,
+    ) -> SheetValueRows:
+        worksheet = self.get_spreadsheet(
+            target_spreadsheet=target_spreadsheet,
+        ).worksheet(sheet_name)
+        values = worksheet.get(
+            range_name,
+            value_render_option=ValueRenderOption.unformatted,
+        )
+        return [list(row) for row in values]
+
     async def update_formula(
         self,
         *,
-        sheet_name: str,
-        cell: str,
-        formula: str,
+        sheet_name: SheetName,
+        cell: CellReference,
+        formula: FormulaText,
         target_spreadsheet: TargetYear = "current_year",
     ) -> None:
         await asyncio.to_thread(
@@ -163,9 +204,9 @@ class GoogleSheetsClient(BaseModel):
     def _update_formula_sync(
         self,
         *,
-        sheet_name: str,
-        cell: str,
-        formula: str,
+        sheet_name: SheetName,
+        cell: CellReference,
+        formula: FormulaText,
         target_spreadsheet: TargetYear,
     ) -> None:
         worksheet = self.get_spreadsheet(
@@ -180,10 +221,10 @@ class GoogleSheetsClient(BaseModel):
     def build_updated_formula(
         self,
         *,
-        old_formula: str,
+        old_formula: FormulaText,
         amount: int | str,
         refund: bool,
-    ) -> str:
+    ) -> FormulaText:
         formula = old_formula.strip()
         if formula == "":
             formula = "=0"
@@ -199,12 +240,12 @@ class GoogleSheetsClient(BaseModel):
         operator = "-" if refund else "+"
         return f"{formula}{operator}{amount_term}"
 
-    def parse_formula_terms(self, formula: str) -> list[FormulaTerm]:
+    def parse_formula_terms(self, formula: FormulaText) -> FormulaTerms:
         normalized_formula = self._normalize_formula(formula)
         if normalized_formula == "=0":
             return []
 
-        terms: list[FormulaTerm] = []
+        terms: FormulaTerms = []
         expression = normalized_formula.removeprefix("=")
         for match in FORMULA_TERM_PATTERN.finditer(expression):
             operator = match.group("operator") or "+"
@@ -215,14 +256,14 @@ class GoogleSheetsClient(BaseModel):
             terms.append(FormulaTerm(amount_term=amount_term, signed_amount=amount))
         return terms
 
-    def formula_total(self, formula: str) -> int | float:
+    def formula_total(self, formula: FormulaText) -> JsonAmount:
         terms = self.parse_formula_terms(formula)
         return _json_amount(sum((term.signed_amount for term in terms), Decimal("0")))
 
     def build_formula_without_amount(
         self,
         *,
-        old_formula: str,
+        old_formula: FormulaText,
         amount: int,
     ) -> FormulaRemovalResult:
         terms = self.parse_formula_terms(old_formula)
@@ -249,7 +290,7 @@ class GoogleSheetsClient(BaseModel):
             duplicate_matches=len(matching_indexes),
         )
 
-    def _normalize_formula(self, formula: str) -> str:
+    def _normalize_formula(self, formula: FormulaText) -> FormulaText:
         normalized_formula = formula.strip() or "=0"
         if not SIMPLE_FORMULA_PATTERN.fullmatch(normalized_formula):
             raise ValueError(
@@ -274,7 +315,7 @@ def _amount_term_value(amount_term: str) -> Decimal:
     return Decimal(terms.group("amount")) * numerator / denominator
 
 
-def _build_formula_from_terms(terms: list[FormulaTerm]) -> str:
+def _build_formula_from_terms(terms: FormulaTerms) -> FormulaText:
     if not terms:
         return "=0"
 
@@ -288,7 +329,7 @@ def _build_formula_from_terms(terms: list[FormulaTerm]) -> str:
     return "=" + "".join(formula_terms)
 
 
-def _json_amount(amount: Decimal) -> int | float:
+def _json_amount(amount: Decimal) -> JsonAmount:
     if amount == amount.to_integral_value():
         return int(amount)
     return float(amount)

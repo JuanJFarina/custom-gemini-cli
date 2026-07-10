@@ -1,5 +1,7 @@
 import base64
 import json
+from collections.abc import Mapping
+from functools import cache
 from pathlib import Path
 
 from harle_utils import Settings
@@ -21,18 +23,19 @@ class AgentSettings(Settings):
     MAX_CONVERSATION_TOKENS: int = 1000
 
     @property
-    def GOOGLE_SERVICE_ACCOUNT(self) -> str:  # pylint: disable=invalid-name
+    # pylint: disable-next=invalid-name
+    def GOOGLE_SERVICE_ACCOUNT(self) -> Mapping[str, object]:
         decoded = base64.b64decode(self.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64).decode(
             "utf-8",
         )
-        return json.loads(decoded)
+        decoded_json = json.loads(decoded)
+        if not isinstance(decoded_json, Mapping):
+            raise ValueError(
+                "GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 must decode to an object.",
+            )
+        return decoded_json
 
 
-AGENT_SETTINGS: AgentSettings | None = None
-
-
+@cache
 def get_agent_settings() -> AgentSettings:
-    global AGENT_SETTINGS  # pylint: disable=global-statement
-    if AGENT_SETTINGS is None:
-        AGENT_SETTINGS = AgentSettings()
-    return AGENT_SETTINGS
+    return AgentSettings()

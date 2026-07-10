@@ -48,3 +48,8 @@ repos:
           - src
         additional_dependencies:
           - "."
+
+  - repo: https://github.com/JuanJFarina/pymetrica
+    rev: v1.5.6
+    hooks:
+      - id: pymetrica

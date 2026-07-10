@@ -1,6 +1,7 @@
 import re
 
 CATEGORY_COLUMNS = ("B", "C", "D", "E", "F", "G", "H", "I")
+TOTAL_COLUMN = "J"
 
 MONTH_SHEET_MAPPING = {
     1: "enero",

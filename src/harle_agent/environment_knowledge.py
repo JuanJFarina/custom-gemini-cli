@@ -1,11 +1,11 @@
 from asyncio import Lock
-from dataclasses import dataclass
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from time import monotonic
-from typing import cast
 from urllib.parse import urlencode
 
 import httpx
+from pydantic import BaseModel, ConfigDict
 
 ROSARIO_LATITUDE = -32.9468
 ROSARIO_LONGITUDE = -60.6393
@@ -16,13 +16,26 @@ WEATHER_FAILURE_CACHE_SECONDS = 60
 WEATHER_UNAVAILABLE = "Current weather is unavailable."
 
 
-@dataclass(frozen=True)
-class _WeatherCache:
-    value: str
-    expires_at: float
+class _WeatherCache(BaseModel):
+    value: str = ""
+    expires_at: float = 0.0
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    def is_valid(self) -> bool:
+        return self.expires_at > monotonic()
+
+    def write(self, value: str) -> None:
+        cache_seconds = (
+            WEATHER_FAILURE_CACHE_SECONDS
+            if value == WEATHER_UNAVAILABLE
+            else WEATHER_CACHE_SECONDS
+        )
+        self.value = value
+        self.expires_at = monotonic() + cache_seconds
 
 
-_WEATHER_CACHE: _WeatherCache | None = None
+_WEATHER_CACHE = _WeatherCache()
 _WEATHER_CACHE_LOCK = Lock()
 
 
@@ -32,38 +45,34 @@ def get_current_time_and_date() -> str:
 
 
 async def get_current_weather() -> str:
-    global _WEATHER_CACHE  # pylint: disable=global-statement
-
-    cached_weather = _cached_weather()
-    if cached_weather is not None:
-        return cached_weather
+    if _WEATHER_CACHE.is_valid():
+        return _WEATHER_CACHE.value
 
     async with _WEATHER_CACHE_LOCK:
-        cached_weather = _cached_weather()
-        if cached_weather is not None:
-            return cached_weather
+        if _WEATHER_CACHE.is_valid():
+            return _WEATHER_CACHE.value
 
         weather = await _fetch_current_weather()
-        cache_seconds = (
-            WEATHER_FAILURE_CACHE_SECONDS
-            if weather == WEATHER_UNAVAILABLE
-            else WEATHER_CACHE_SECONDS
-        )
-        _WEATHER_CACHE = _WeatherCache(
-            value=weather,
-            expires_at=monotonic() + cache_seconds,
-        )
+        _WEATHER_CACHE.write(weather)
         return weather
 
 
-def _cached_weather() -> str | None:
-    if _WEATHER_CACHE is None or _WEATHER_CACHE.expires_at <= monotonic():
-        return None
-    return _WEATHER_CACHE.value
+async def _fetch_current_weather() -> str:
+    url = f"https://api.open-meteo.com/v1/forecast?{_weather_query()}"
+
+    try:
+        async with httpx.AsyncClient(timeout=WEATHER_TIMEOUT_SECONDS) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            payload = response.json()
+    except (httpx.HTTPError, ValueError):
+        return WEATHER_UNAVAILABLE
+
+    return _weather_from_payload(payload)
 
 
-async def _fetch_current_weather() -> str:  # pylint: disable=too-many-locals
-    query = urlencode(
+def _weather_query() -> str:
+    return urlencode(
         {
             "latitude": ROSARIO_LATITUDE,
             "longitude": ROSARIO_LONGITUDE,
@@ -80,51 +89,81 @@ async def _fetch_current_weather() -> str:  # pylint: disable=too-many-locals
             "timezone": "America/Argentina/Cordoba",
         },
     )
-    url = f"https://api.open-meteo.com/v1/forecast?{query}"
 
-    try:
-        async with httpx.AsyncClient(timeout=WEATHER_TIMEOUT_SECONDS) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            payload = response.json()
-    except (httpx.HTTPError, ValueError):
+
+def _weather_from_payload(payload: object) -> str:
+    if not isinstance(payload, Mapping):
         return WEATHER_UNAVAILABLE
 
-    if not isinstance(payload, dict):
-        return WEATHER_UNAVAILABLE
-
-    current = payload.get("current") or {}
-    units = payload.get("current_units") or {}
+    current = _mapping_from_value(payload.get("current"))
+    units = _mapping_from_value(payload.get("current_units"))
 
     temperature = current.get("temperature_2m")
-    apparent_temperature = current.get("apparent_temperature")
-    humidity = current.get("relative_humidity_2m")
-    precipitation = current.get("precipitation")
-    wind_speed = current.get("wind_speed_10m")
-    weather_code = current.get("weather_code")
-
     if temperature is None:
         return WEATHER_UNAVAILABLE
 
-    parts = [
+    parts = _weather_parts(
+        current=current,
+        units=units,
+    )
+    summary = _weather_code_summary(_weather_code(current.get("weather_code")))
+    values = ", ".join(part for part in parts if part)
+    return f"{summary}; {values}"
+
+
+def _mapping_from_value(value: object) -> Mapping[str, object]:
+    if isinstance(value, Mapping):
+        return value
+    return {}
+
+
+def _weather_parts(
+    *,
+    current: Mapping[str, object],
+    units: Mapping[str, object],
+) -> list[str]:
+    return [
         _format_value(
             "temperature",
-            temperature,
-            units.get("temperature_2m", "C"),
+            current.get("temperature_2m"),
+            _unit(units, "temperature_2m", "C"),
         ),
         _format_value(
             "feels like",
-            apparent_temperature,
-            units.get("apparent_temperature", "C"),
+            current.get("apparent_temperature"),
+            _unit(units, "apparent_temperature", "C"),
         ),
-        _format_value("humidity", humidity, units.get("relative_humidity_2m", "%")),
-        _format_value("precipitation", precipitation, units.get("precipitation", "mm")),
-        _format_value("wind", wind_speed, units.get("wind_speed_10m", "km/h")),
+        _format_value(
+            "humidity",
+            current.get("relative_humidity_2m"),
+            _unit(units, "relative_humidity_2m", "%"),
+        ),
+        _format_value(
+            "precipitation",
+            current.get("precipitation"),
+            _unit(units, "precipitation", "mm"),
+        ),
+        _format_value(
+            "wind",
+            current.get("wind_speed_10m"),
+            _unit(units, "wind_speed_10m", "km/h"),
+        ),
     ]
 
-    summary = _weather_code_summary(cast(int, weather_code))
-    values = ", ".join(part for part in parts if part)
-    return f"{summary}; {values}"
+
+def _unit(units: Mapping[str, object], key: str, default: str) -> str:
+    value = units.get(key)
+    if isinstance(value, str):
+        return value
+    return default
+
+
+def _weather_code(value: object) -> int:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return -1
 
 
 def _format_value(label: str, value: object, unit: str) -> str:

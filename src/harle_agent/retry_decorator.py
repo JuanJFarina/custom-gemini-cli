@@ -3,13 +3,24 @@ from functools import wraps
 from time import time
 from typing import Any
 
+from google.genai.errors import APIError, ClientError, ServerError
+from pydantic import ValidationError
+
 from harle_utils import log
 
 from .models import HarleResponse, HarleToolResult
 from .settings import get_agent_settings
 from .tools import show_tool_results
 
-Settings = get_agent_settings()
+SETTINGS = get_agent_settings()
+ASSISTANT_FAILURES = (
+    APIError,
+    ClientError,
+    ServerError,
+    RuntimeError,
+    ValueError,
+    ValidationError,
+)
 
 
 def retry(
@@ -19,7 +30,7 @@ def retry(
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
         attempts = 0
         start_time = time()
-        while attempts < Settings.MAX_RETRIES:
+        while attempts < SETTINGS.MAX_RETRIES:
             attempts += 1
             try:
                 result = await func(*args, **kwargs)
@@ -27,7 +38,7 @@ def retry(
                     f"{func.__name__} SUCCEDED in {time() - start_time} seconds with {attempts} attempts",
                 )
                 return result
-            except Exception as e:  # pylint: disable=broad-exception-caught
+            except ASSISTANT_FAILURES as e:
                 log.error(f"Attempt {attempts} for {func.__name__} failed: {e}")
         log.warning(
             f"{func.__name__} FAILED in {time() - start_time} seconds with {attempts} attempts",
@@ -51,13 +62,13 @@ def retry(
                 called_tool_name="Tool name not available when creating this error message.",
                 result={
                     "error": (
-                        f"Tool can't be called, even after {Settings.MAX_RETRIES} "
+                        f"Tool can't be called, even after {SETTINGS.MAX_RETRIES} "
                         "attempts. Don't retry.",
                     ),
                 },
             )
         raise RuntimeError(
-            f"Unknown error: {func.__name__} failed after {Settings.MAX_RETRIES} attempts.",
+            f"Unknown error: {func.__name__} failed after {SETTINGS.MAX_RETRIES} attempts.",
         )
 
     return wrapper

@@ -93,3 +93,6 @@ fail-under = 10.0
 
 [tool.vercel]
 entrypoint = "src.harle_api.app:harle_app"
+
+[tool.pymetrica]
+mc_fail_threshold = 20
