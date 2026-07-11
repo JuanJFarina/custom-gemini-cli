@@ -3,6 +3,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from harle_agent.models import HarleToolInteraction
 from harle_agent.settings import CONVERSATIONS_DIR, get_agent_settings
 
 TOKENS_CAP = get_agent_settings().MAX_CONVERSATION_TOKENS
@@ -51,6 +52,18 @@ class FileConversationStore:
             model=model,
         )
 
+    async def save_tool_call(
+        self,
+        *,
+        interaction: HarleToolInteraction,
+        model: str,
+    ) -> None:
+        await asyncio.to_thread(
+            self._save_tool_call_sync,
+            interaction=interaction,
+            model=model,
+        )
+
     def _save_sync(self, *, prompt: str, response_text: str, model: str) -> None:
         self.conversations_dir.mkdir(parents=True, exist_ok=True)
         path = self._new_conversation_path()
@@ -58,6 +71,22 @@ class FileConversationStore:
             _format_conversation(
                 prompt=prompt,
                 response_text=response_text,
+                model=model,
+            ),
+            encoding="utf-8",
+        )
+
+    def _save_tool_call_sync(
+        self,
+        *,
+        interaction: HarleToolInteraction,
+        model: str,
+    ) -> None:
+        self.conversations_dir.mkdir(parents=True, exist_ok=True)
+        path = self._new_conversation_path()
+        path.write_text(
+            _format_tool_call_conversation(
+                interaction=interaction,
                 model=model,
             ),
             encoding="utf-8",
@@ -91,9 +120,28 @@ def _format_conversation(prompt: str, response_text: str, model: str) -> str:
     return json.dumps(
         {
             "conversation_date": created_at,
+            "conversation_kind": "conversation",
             "model": model,
             "juan_jose_farina_prompt": prompt,
             "response": response_text,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def _format_tool_call_conversation(
+    interaction: HarleToolInteraction,
+    model: str,
+) -> str:
+    created_at = datetime.now().isoformat(timespec="seconds")
+    return json.dumps(
+        {
+            "conversation_date": created_at,
+            "conversation_kind": "tool_call",
+            "model": model,
+            "gemini_tool_call_response": interaction.tool_call.model_dump(),
+            "tool_results": interaction.tool_result.model_dump(),
         },
         ensure_ascii=False,
         indent=2,

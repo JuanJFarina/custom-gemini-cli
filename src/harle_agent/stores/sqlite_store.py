@@ -2,26 +2,16 @@ import asyncio
 import json
 import sqlite3
 from contextlib import closing
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
+from harle_agent.models import ConversationRecord, HarleToolInteraction
 from harle_agent.settings import get_agent_settings
 
 TOKENS_CAP = get_agent_settings().MAX_CONVERSATION_TOKENS
 
 NO_CONVERSATIONS_MESSAGE = "No conversations yet"
-
-
-@dataclass(frozen=True)
-class ConversationRecord:
-    chat_id: int
-    user_id: int
-    prompt: str
-    response: str
-    model: str
-    created_at: str
 
 
 class SQLiteConversationStore:
@@ -39,7 +29,13 @@ class SQLiteConversationStore:
         with closing(self._connect()) as connection:
             rows = connection.execute(
                 """
-                SELECT telegram_chat_id, telegram_user_id, prompt, response, model, created_at
+                SELECT
+                    prompt,
+                    response,
+                    created_at,
+                    kind,
+                    tool_call_response,
+                    tool_result
                 FROM conversations
                 WHERE telegram_chat_id = ? AND telegram_user_id = ?
                 ORDER BY created_at DESC, id DESC
@@ -76,6 +72,18 @@ class SQLiteConversationStore:
             model=model,
         )
 
+    async def save_tool_call(
+        self,
+        *,
+        interaction: HarleToolInteraction,
+        model: str,
+    ) -> None:
+        await asyncio.to_thread(
+            self._save_tool_call_sync,
+            interaction=interaction,
+            model=model,
+        )
+
     def _save_sync(self, *, prompt: str, response_text: str, model: str) -> None:
         self._ensure_schema()
         created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -90,9 +98,10 @@ class SQLiteConversationStore:
                         prompt,
                         response,
                         model,
-                        created_at
+                        created_at,
+                        kind
                     )
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         self.chat_id,
@@ -101,6 +110,46 @@ class SQLiteConversationStore:
                         response_text,
                         model,
                         created_at,
+                        "conversation",
+                    ),
+                )
+
+    def _save_tool_call_sync(
+        self,
+        *,
+        interaction: HarleToolInteraction,
+        model: str,
+    ) -> None:
+        self._ensure_schema()
+        created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+        with closing(self._connect()) as connection:
+            with connection:
+                connection.execute(
+                    """
+                    INSERT INTO conversations (
+                        telegram_chat_id,
+                        telegram_user_id,
+                        prompt,
+                        response,
+                        model,
+                        created_at,
+                        kind,
+                        tool_call_response,
+                        tool_result
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        self.chat_id,
+                        self.user_id,
+                        "",
+                        "",
+                        model,
+                        created_at,
+                        "tool_call",
+                        json.dumps(interaction.tool_call.model_dump()),
+                        json.dumps(interaction.tool_result.model_dump()),
                     ),
                 )
 
@@ -118,9 +167,27 @@ class SQLiteConversationStore:
                         prompt TEXT NOT NULL,
                         response TEXT NOT NULL,
                         model TEXT NOT NULL,
-                        created_at TEXT NOT NULL
+                        created_at TEXT NOT NULL,
+                        kind TEXT NOT NULL DEFAULT 'conversation',
+                        tool_call_response TEXT,
+                        tool_result TEXT
                     )
                     """,
+                )
+                _ensure_column(
+                    connection=connection,
+                    column_name="kind",
+                    definition="kind TEXT NOT NULL DEFAULT 'conversation'",
+                )
+                _ensure_column(
+                    connection=connection,
+                    column_name="tool_call_response",
+                    definition="tool_call_response TEXT",
+                )
+                _ensure_column(
+                    connection=connection,
+                    column_name="tool_result",
+                    definition="tool_result TEXT",
                 )
                 connection.execute(
                     """
@@ -135,24 +202,61 @@ class SQLiteConversationStore:
 
 def _record_from_row(row: sqlite3.Row | tuple[object, ...]) -> ConversationRecord:
     return ConversationRecord(
-        chat_id=cast(int, row[0]),
-        user_id=cast(int, row[1]),
-        prompt=str(row[2]),
-        response=str(row[3]),
-        model=str(row[4]),
-        created_at=str(row[5]),
+        prompt=str(row[0]),
+        response=str(row[1]),
+        created_at=str(row[2]),
+        kind=str(row[3]),
+        tool_call_response=cast(str | None, row[4]),
+        tool_result=cast(str | None, row[5]),
     )
 
 
 def _format_conversation_for_context(record: ConversationRecord) -> str:
+    if record.kind == "tool_call":
+        return _format_tool_call_conversation_for_context(record)
+
     return json.dumps(
         {
             "conversation_date": record.created_at,
-            "telegram_chat_id": record.chat_id,
-            "telegram_user_id": record.user_id,
+            "conversation_kind": "conversation",
             "juan_jose_farina_prompt": record.prompt,
             "response": record.response,
         },
         ensure_ascii=False,
         indent=2,
     )
+
+
+def _format_tool_call_conversation_for_context(record: ConversationRecord) -> str:
+    return json.dumps(
+        {
+            "conversation_date": record.created_at,
+            "conversation_kind": "tool_call",
+            "gemini_tool_call_response": json.loads(
+                _json_text(record.tool_call_response),
+            ),
+            "tool_results": json.loads(_json_text(record.tool_result)),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def _ensure_column(
+    *,
+    connection: sqlite3.Connection,
+    column_name: str,
+    definition: str,
+) -> None:
+    columns = connection.execute("PRAGMA table_info(conversations)").fetchall()
+    column_names = {str(column[1]) for column in columns}
+    if column_name not in column_names:
+        connection.execute(f"ALTER TABLE conversations ADD COLUMN {definition}")
+
+
+def _json_text(value: object) -> str:
+    if value is None:
+        return "{}"
+    if not isinstance(value, str):
+        raise TypeError(f"Expected JSON text, got {type(value).__name__}")
+    return value

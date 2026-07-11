@@ -62,7 +62,7 @@ Schema 2 for calling a tool (example with "add_one_time_transaction" tool):
 
 - This is the current time and date in Rosario, Argentina: {current_time_and_date}.
 - This is the current weather: {current_weather}.
-- These are your latest conversations with Juan:
+- These are your latest conversations with Juan, including tool calls and tool results:
 
 <latest_conversations_with_juan>
 

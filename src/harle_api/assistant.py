@@ -3,10 +3,9 @@ from asyncio import Task
 import httpx
 
 from harle_agent.agent import Harle
-from harle_agent.models import HarleStores, HarleToolStore
+from harle_agent.models import ConversationStore, HarleStores, HarleToolStore
 from harle_agent.retry_decorator import ASSISTANT_FAILURES
 from harle_agent.stores import (
-    ConversationStore,
     PostgresConversationStore,
     SQLiteConversationStore,
 )

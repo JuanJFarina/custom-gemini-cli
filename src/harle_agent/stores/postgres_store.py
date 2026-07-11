@@ -1,23 +1,16 @@
 import json
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 import asyncpg
 
+from harle_agent.models import ConversationRecord, HarleToolInteraction
 from harle_agent.settings import get_agent_settings
 
 TOKENS_CAP = get_agent_settings().MAX_CONVERSATION_TOKENS
 
 NO_CONVERSATIONS_MESSAGE = "No conversations yet"
-
-
-@dataclass(frozen=True)
-class ConversationRecord:
-    prompt: str
-    response: str
-    created_at: str
 
 
 class PostgresConversationStore:
@@ -38,7 +31,13 @@ class PostgresConversationStore:
         async with self.pool.acquire() as connection:
             rows = await connection.fetch(
                 """
-                SELECT prompt, response, model, created_at
+                SELECT
+                    prompt,
+                    response,
+                    created_at,
+                    kind,
+                    tool_call_response,
+                    tool_result
                 FROM conversations
                 WHERE user_id = $1 AND telegram_chat_id = $2
                 ORDER BY created_at DESC, id DESC
@@ -79,15 +78,48 @@ class PostgresConversationStore:
                     telegram_chat_id,
                     prompt,
                     response,
-                    model
+                    model,
+                    kind
                 )
-                VALUES ($1, $2, $3, $4, $5)
+                VALUES ($1, $2, $3, $4, $5, $6)
                 """,
                 self.user_id,
                 self.telegram_chat_id,
                 prompt,
                 response_text,
                 model,
+                "conversation",
+            )
+
+    async def save_tool_call(
+        self,
+        *,
+        interaction: HarleToolInteraction,
+        model: str,
+    ) -> None:
+        async with self.pool.acquire() as connection:
+            await connection.execute(
+                """
+                INSERT INTO conversations (
+                    user_id,
+                    telegram_chat_id,
+                    prompt,
+                    response,
+                    model,
+                    kind,
+                    tool_call_response,
+                    tool_result
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
+                """,
+                self.user_id,
+                self.telegram_chat_id,
+                "",
+                "",
+                model,
+                "tool_call",
+                json.dumps(interaction.tool_call.model_dump()),
+                json.dumps(interaction.tool_result.model_dump()),
             )
 
 
@@ -128,8 +160,29 @@ async def _ensure_schema(connection: asyncpg.Connection) -> None:
             prompt TEXT NOT NULL,
             response TEXT NOT NULL,
             model TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'conversation',
+            tool_call_response JSONB,
+            tool_result JSONB,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
+        """,
+    )
+    await connection.execute(
+        """
+        ALTER TABLE conversations
+        ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'conversation'
+        """,
+    )
+    await connection.execute(
+        """
+        ALTER TABLE conversations
+        ADD COLUMN IF NOT EXISTS tool_call_response JSONB
+        """,
+    )
+    await connection.execute(
+        """
+        ALTER TABLE conversations
+        ADD COLUMN IF NOT EXISTS tool_result JSONB
         """,
     )
     await connection.execute(
@@ -169,15 +222,35 @@ def _record_from_row(row: asyncpg.Record) -> ConversationRecord:
         prompt=str(row["prompt"]),
         response=str(row["response"]),
         created_at=_format_created_at(row["created_at"]),
+        kind=str(row["kind"]),
+        tool_call_response=row["tool_call_response"],
+        tool_result=row["tool_result"],
     )
 
 
 def _format_conversation_for_context(record: ConversationRecord) -> str:
+    if record.kind == "tool_call":
+        return _format_tool_call_conversation_for_context(record)
+
     return json.dumps(
         {
             "conversation_date": record.created_at,
+            "conversation_kind": "conversation",
             "juan_jose_farina_prompt": record.prompt,
             "response": record.response,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def _format_tool_call_conversation_for_context(record: ConversationRecord) -> str:
+    return json.dumps(
+        {
+            "conversation_date": record.created_at,
+            "conversation_kind": "tool_call",
+            "gemini_tool_call_response": _json_object(record.tool_call_response),
+            "tool_results": _json_object(record.tool_result),
         },
         ensure_ascii=False,
         indent=2,
@@ -188,6 +261,14 @@ def _format_created_at(value: Any) -> str:
     if isinstance(value, datetime):
         return value.isoformat(timespec="seconds")
     return str(value)
+
+
+def _json_object(value: object) -> object:
+    if value is None:
+        return {}
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
 
 
 def _optional_int(value: Any) -> int | None:

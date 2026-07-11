@@ -21,10 +21,12 @@ from .environment_knowledge import (
 )
 from .models import (
     HarleConfig,
+    HarleRunResult,
     HarleStores,
     HarleThought,
     HarleThoughtAdapter,
     HarleToolCall,
+    HarleToolInteraction,
     HarleToolResult,
 )
 from .prompts import SYSTEM_PROMPT
@@ -58,26 +60,30 @@ class Harle(BaseModel):
             current_weather=current_weather,
         )
         log.info("Starting reason and act loop")
-        response: str = await self._reason_and_act(
+        run_result = await self._reason_and_act(
             prompt=prompt,
             system_instruction=system_instruction,
         )
         log.info("Creating task to save conversation")
-        task = self._save_conversation(prompt=prompt, response_text=response)
+        task = self._save_conversation(prompt=prompt, run_result=run_result)
         log.info(f"Reason and act loop took {time() - start_time} seconds")
-        return response, task
+        return run_result.response_text, task
 
     async def _reason_and_act(
         self,
         prompt: str,
         system_instruction: str,
-        tool_results: list[HarleToolResult] | None = None,
-    ) -> str:
-        tool_results = tool_results or []
+        tool_interactions: list[HarleToolInteraction] | None = None,
+    ) -> HarleRunResult:
+        tool_interactions = tool_interactions or []
+        tool_results = _tool_results(tool_interactions)
         if len(tool_results) >= SETTINGS.MAX_LOOPS:
-            return (
-                "I'm looping infinitely, these are the tool results so far: "
-                f"{show_tool_results(tool_results)}"
+            return HarleRunResult(
+                response_text=(
+                    "I'm looping infinitely, these are the tool results so far: "
+                    f"{show_tool_results(tool_results)}"
+                ),
+                tool_interactions=tool_interactions,
             )
         harle_thought = await self._call_gemini(
             system_instruction=system_instruction,
@@ -88,17 +94,29 @@ class Harle(BaseModel):
         if harle_thought.action == "respond":
             if not harle_thought.response:
                 log.warning("Action is respond but response is empty")
-            return harle_thought.response or "I can't respond for some reason, sorry !"
+            return HarleRunResult(
+                response_text=(
+                    harle_thought.response or "I can't respond for some reason, sorry !"
+                ),
+                tool_interactions=tool_interactions,
+            )
 
         if harle_thought.action == "call_tool":
             result = await self._call_tool(harle_thought)
+            interaction = HarleToolInteraction(
+                tool_call=harle_thought,
+                tool_result=result,
+            )
             return await self._reason_and_act(
                 prompt=prompt,
                 system_instruction=system_instruction,
-                tool_results=tool_results + [result],
+                tool_interactions=tool_interactions + [interaction],
             )
         log.warning(f"Unknown action: {harle_thought.action}")
-        return "I can't respond for some reason, sorry !"
+        return HarleRunResult(
+            response_text="I can't respond for some reason, sorry !",
+            tool_interactions=tool_interactions,
+        )
 
     @retry
     async def _call_gemini(
@@ -144,13 +162,24 @@ class Harle(BaseModel):
         response_text = self._extract_json_object(text_parts[-1])
         return HarleThoughtAdapter.validate_json(response_text)
 
-    def _save_conversation(self, prompt: str, response_text: str) -> Task[None]:
-        return create_task(
-            self.stores.conversation_store.save(
-                prompt=prompt,
-                response_text=response_text,
+    def _save_conversation(self, prompt: str, run_result: HarleRunResult) -> Task[None]:
+        return create_task(self._save_conversation_run(prompt, run_result))
+
+    async def _save_conversation_run(
+        self,
+        prompt: str,
+        run_result: HarleRunResult,
+    ) -> None:
+        for interaction in run_result.tool_interactions:
+            await self.stores.conversation_store.save_tool_call(
+                interaction=interaction,
                 model=self.config.model,
-            ),
+            )
+
+        await self.stores.conversation_store.save(
+            prompt=prompt,
+            response_text=run_result.response_text,
+            model=self.config.model,
         )
 
     @retry
@@ -212,3 +241,9 @@ def _load_personal_history(path: Path) -> str:
     if not content:
         log.warning("Personal history file is empty")
     return content or "No personal history has been recorded yet."
+
+
+def _tool_results(
+    tool_interactions: list[HarleToolInteraction],
+) -> list[HarleToolResult]:
+    return [interaction.tool_result for interaction in tool_interactions]
