@@ -2,7 +2,7 @@ from harle_agent.models import HarleTool
 
 SHARED_EXPENSES_TOOLS_PROMPT = """(for all expenses-related tools, follow these guidelines)
 
-- If a transaction happened in between 00:00 am and 04:00 pm (as an example, on the day 12), it should be added to the previous day (on the day 11). Always inform of this decision to the user.
+- If a transaction happened in between 12:00 AM and 04:00 AM (as an example, on the day 12), it should be added to the previous day (on the day 11). Always inform of this decision to the user.
 - Valid category strings:
   - "B": For all fees related to rent and building (spreadsheet column name: "alquileres").
   - "C": For all fees related to essential services like electricity, gas, water, healthcare, etc. (spreadsheet column name: "servicios_esenciales").

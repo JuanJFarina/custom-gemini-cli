@@ -41,7 +41,7 @@ _WEATHER_CACHE_LOCK = Lock()
 
 def get_current_time_and_date() -> str:
     now = datetime.now(ROSARIO_TIMEZONE)
-    return now.strftime("%A, %Y-%m-%d %H:%M %Z")
+    return now.strftime("%A, %Y-%m-%d %I:%M %p %Z")
 
 
 async def get_current_weather() -> str:
