@@ -35,7 +35,6 @@ class DayExpenses(BaseModel):
 
 class MonthExpenses(BaseModel):
     category_totals: dict[str, int | float]
-    days: list[DayExpenses]
     total: int | float
 
 
@@ -83,23 +82,13 @@ async def get_month_expenses(
     today = _current_expenses_date()
     validated_args = MonthExpensesArgs(month=args.get("month", today.month))
     sheet_name = MONTH_SHEET_MAPPING[validated_args.month]
-    formulas = await sheets_client.get_formulas(
-        sheet_name=sheet_name,
-        range_name=(
-            f"{CATEGORY_COLUMNS[0]}{FIRST_DAY_ROW}:{CATEGORY_COLUMNS[-1]}{LAST_DAY_ROW}"
-        ),
-    )
     values = await sheets_client.get_values(
         sheet_name=sheet_name,
         range_name=(
             f"{CATEGORY_COLUMNS[0]}{FIRST_DAY_ROW}:{TOTAL_COLUMN}{FINAL_TOTAL_ROW}"
         ),
     )
-    month_expenses = _month_expenses_from_rows(
-        sheets_client=sheets_client,
-        formula_rows=formulas,
-        value_rows=values,
-    )
+    month_expenses = _month_expenses_from_rows(value_rows=values)
 
     return HarleToolResult(
         called_tool_name="get_month_expenses",
@@ -143,28 +132,14 @@ def _day_expenses_from_rows(
 
 def _month_expenses_from_rows(
     *,
-    sheets_client: GoogleSheetsClient,
-    formula_rows: list[list[str]],
     value_rows: list[list[object]],
 ) -> MonthExpenses:
-    days: list[DayExpenses] = []
-    for row_index, formula_row in enumerate(formula_rows):
-        day_expenses = _day_expenses_from_rows(
-            sheets_client=sheets_client,
-            formula_row=formula_row,
-            value_row=_value_row_at(value_rows, row_index),
-            day=row_index + 1,
-        )
-        if day_expenses.transactions or day_expenses.total:
-            days.append(day_expenses)
-
     total_row = _value_row_at(
         value_rows,
         FINAL_TOTAL_ROW - FIRST_DAY_ROW,
     )
     return MonthExpenses(
         category_totals=_category_totals_from_row(total_row),
-        days=days,
         total=_row_total(total_row),
     )
 
@@ -238,7 +213,7 @@ GET_DAY_EXPENSES_PROMPT = """
 GET_MONTH_EXPENSES_PROMPT = """
 ## "get_month_expenses" tool
 
-- Tool for reading all the transactions for one entire month from the expenses spreadsheet.
+- Tool for reading the category totals and total amount for one entire month from the expenses spreadsheet.
 - Args:
   - "month": Optional integer of the month to read, from 1 to 12. Defaults to the current month.
 - Example:
