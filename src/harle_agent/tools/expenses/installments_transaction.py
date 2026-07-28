@@ -111,4 +111,5 @@ ADD_IN_INSTALLMENTS_TRANSACTION_TOOL = HarleTool(
     name="add_in_installments_transaction",
     func=add_in_installments_transaction,
     prompt=ADD_IN_INSTALLMENTS_TRANSACTION_PROMPT,
+    can_run_concurrently=False,
 )

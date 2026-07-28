@@ -270,4 +270,5 @@ REMOVE_OR_UPDATE_TRANSACTION_TOOL = HarleTool(
     name="remove_or_update_transaction",
     func=remove_or_update_transaction,
     prompt=REMOVE_OR_UPDATE_TRANSACTION_PROMPT,
+    can_run_concurrently=False,
 )

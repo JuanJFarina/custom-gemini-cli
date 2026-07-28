@@ -140,8 +140,10 @@ def _format_tool_call_conversation(
             "conversation_date": created_at,
             "conversation_kind": "tool_call",
             "model": model,
-            "gemini_tool_call_response": interaction.tool_call.model_dump(),
-            "tool_results": interaction.tool_result.model_dump(),
+            "gemini_tool_call_response": interaction.tool_call_response.model_dump(),
+            "tool_results": [
+                result.model_dump() for result in interaction.tool_results
+            ],
         },
         ensure_ascii=False,
         indent=2,

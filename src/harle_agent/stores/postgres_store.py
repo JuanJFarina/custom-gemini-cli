@@ -118,8 +118,10 @@ class PostgresConversationStore:
                 "",
                 model,
                 "tool_call",
-                json.dumps(interaction.tool_call.model_dump()),
-                json.dumps(interaction.tool_result.model_dump()),
+                json.dumps(interaction.tool_call_response.model_dump()),
+                json.dumps(
+                    [result.model_dump() for result in interaction.tool_results],
+                ),
             )
 
 

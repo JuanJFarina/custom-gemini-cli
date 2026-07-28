@@ -85,4 +85,5 @@ ADD_ONE_TIME_TRANSACTION_TOOL = HarleTool(
     name="add_one_time_transaction",
     func=add_one_time_transaction,
     prompt=ADD_ONE_TIME_TRANSACTION_PROMPT,
+    can_run_concurrently=False,
 )

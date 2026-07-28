@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from harle_utils import log
 
-from .models import HarleResponse, HarleToolResult
+from .models import HarleResponse
 from .settings import get_agent_settings
 from .tools import show_tool_results
 
@@ -56,16 +56,6 @@ def retry(
             return HarleResponse(
                 action="respond",
                 response="I can't respond right now, sorry !",
-            )
-        if func.__name__ == "_call_tool":
-            return HarleToolResult(
-                called_tool_name="Tool name not available when creating this error message.",
-                result={
-                    "error": (
-                        f"Tool can't be called, even after {SETTINGS.MAX_RETRIES} "
-                        "attempts. Don't retry.",
-                    ),
-                },
             )
         raise RuntimeError(
             f"Unknown error: {func.__name__} failed after {SETTINGS.MAX_RETRIES} attempts.",

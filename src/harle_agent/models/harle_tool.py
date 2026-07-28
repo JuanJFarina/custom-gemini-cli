@@ -4,8 +4,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-class HarleToolCall(BaseModel):
-    action: Literal["call_tool"]
+class ToolCall(BaseModel):
     tool_name: Literal[
         "add_one_time_transaction",
         "add_in_installments_transaction",
@@ -16,20 +15,30 @@ class HarleToolCall(BaseModel):
     tool_args: dict[str, Any]
 
 
+class HarleToolCall(BaseModel):
+    action: Literal["call_tool"]
+    calls: list[ToolCall] = Field(min_length=1, max_length=5)
+
+
 class HarleToolResult(BaseModel):
     called_tool_name: str
     result: Any
 
 
 class HarleToolInteraction(BaseModel):
-    tool_call: HarleToolCall
-    tool_result: HarleToolResult
+    tool_calls: list[ToolCall]
+    tool_results: list[HarleToolResult]
+
+    @property
+    def tool_call_response(self) -> HarleToolCall:
+        return HarleToolCall(action="call_tool", calls=self.tool_calls)
 
 
 class HarleTool(BaseModel):
     name: str
     func: Callable[..., Awaitable[HarleToolResult]]
     prompt: str
+    can_run_concurrently: bool
 
 
 class HarleToolStore(BaseModel):

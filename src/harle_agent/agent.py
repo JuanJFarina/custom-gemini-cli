@@ -25,12 +25,12 @@ from .models import (
     HarleStores,
     HarleThought,
     HarleThoughtAdapter,
-    HarleToolCall,
     HarleToolInteraction,
     HarleToolResult,
+    ToolCall,
 )
 from .prompts import SYSTEM_PROMPT
-from .retry_decorator import retry
+from .retry_decorator import ASSISTANT_FAILURES, retry
 from .settings import PERSONAL_HISTORY_PATH, get_agent_settings
 from .tools import TOOLS, show_tool_results
 
@@ -77,7 +77,7 @@ class Harle(BaseModel):
     ) -> HarleRunResult:
         tool_interactions = tool_interactions or []
         tool_results = _tool_results(tool_interactions)
-        if len(tool_results) >= SETTINGS.MAX_LOOPS:
+        if len(tool_interactions) >= SETTINGS.MAX_LOOPS:
             return HarleRunResult(
                 response_text=(
                     "I'm looping infinitely, these are the tool results so far: "
@@ -102,10 +102,10 @@ class Harle(BaseModel):
             )
 
         if harle_thought.action == "call_tool":
-            result = await self._call_tool(harle_thought)
+            results = await self._call_tools(harle_thought.calls)
             interaction = HarleToolInteraction(
-                tool_call=harle_thought,
-                tool_result=result,
+                tool_calls=harle_thought.calls,
+                tool_results=results,
             )
             return await self._reason_and_act(
                 prompt=prompt,
@@ -182,10 +182,37 @@ class Harle(BaseModel):
             model=self.config.model,
         )
 
-    @retry
-    async def _call_tool(self, tool_call: HarleToolCall) -> HarleToolResult:
-        tool = self.stores.tool_store.get(tool_call.tool_name)
-        result = await tool.func(tool_call.tool_args)
+    async def _call_tools(self, calls: list[ToolCall]) -> list[HarleToolResult]:
+        results: list[HarleToolResult] = []
+        concurrent_calls: list[ToolCall] = []
+        for call in calls:
+            tool = self.stores.tool_store.get(call.tool_name)
+            if tool.can_run_concurrently:
+                concurrent_calls.append(call)
+                continue
+            results.extend(await self._call_concurrently(concurrent_calls))
+            concurrent_calls.clear()
+            results.append(await self._call_tool(call))
+        results.extend(await self._call_concurrently(concurrent_calls))
+        return results
+
+    async def _call_concurrently(
+        self,
+        calls: list[ToolCall],
+    ) -> list[HarleToolResult]:
+        coroutines = [self._call_tool(call) for call in calls]
+        return await gather(*coroutines)
+
+    async def _call_tool(self, call: ToolCall) -> HarleToolResult:
+        tool = self.stores.tool_store.get(call.tool_name)
+        try:
+            result = await tool.func(call.tool_args)
+        except ASSISTANT_FAILURES as error:
+            log.error(f"Tool {tool.name} failed: {error}")
+            return HarleToolResult(
+                called_tool_name=tool.name,
+                result={"error": f"{error}. Don't retry."},
+            )
         log.info(f"Tool {tool.name} called successfully")
         return result
 
@@ -243,4 +270,8 @@ def _load_personal_history(path: Path) -> str:
 def _tool_results(
     tool_interactions: list[HarleToolInteraction],
 ) -> list[HarleToolResult]:
-    return [interaction.tool_result for interaction in tool_interactions]
+    return [
+        result
+        for interaction in tool_interactions
+        for result in interaction.tool_results
+    ]

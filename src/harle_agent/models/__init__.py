@@ -14,6 +14,7 @@ from .harle_tool import (
     HarleToolInteraction,
     HarleToolResult,
     HarleToolStore,
+    ToolCall,
 )
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "HarleToolResult",
     "HarleToolCall",
     "HarleToolInteraction",
+    "ToolCall",
 ]

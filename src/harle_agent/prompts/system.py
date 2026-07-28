@@ -30,15 +30,21 @@ Schema 1 for responding to Juan:
   "response": "Your response to Juan"
 }}
 
-Schema 2 for calling a tool (example with "add_one_time_transaction" tool):
+Schema 2 for calling one or more tools once or more times (example with "add_one_time_transaction" tool):
 {{
   "action": "call_tool",
-  "tool_name": "add_one_time_transaction",
-  "tool_args": {{
-    "amount": 100,
-    "category": "E"
-  }}
+  "calls": [
+    {{
+      "tool_name": "add_one_time_transaction",
+      "tool_args": {{
+        "amount": 100,
+        "category": "E"
+      }}
+    }}
+  ]
 }}
+
+- Read-only tool calls may run concurrently. Calls that modify data run in order.
 
 # Your Tools
 

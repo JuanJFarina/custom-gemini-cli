@@ -1,6 +1,7 @@
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 
+from gspread.utils import ValueRenderOption
 from pydantic import BaseModel
 
 from harle_agent.models import HarleTool, HarleToolResult
@@ -14,7 +15,6 @@ from .utils import (
     MonthExpensesArgs,
 )
 
-FIRST_DAY_ROW = 2
 LAST_DAY_ROW = 32
 FINAL_TOTAL_ROW = LAST_DAY_ROW + 1
 EXPENSES_TIMEZONE = timezone(timedelta(hours=-3), name="ART")
@@ -34,34 +34,39 @@ class DayExpenses(BaseModel):
 
 
 class MonthExpenses(BaseModel):
+    month: int
+    sheet: str
     category_totals: dict[str, int | float]
     total: int | float
 
 
-async def get_day_expenses(args: Mapping[str, object] | None = None) -> HarleToolResult:
-    args = args or {}
+async def get_day_expenses(args: Mapping[str, object]) -> HarleToolResult:
     sheets_client = GoogleSheetsClient()
     today = _current_expenses_date()
     validated_args = DayExpensesArgs(
-        day=args.get("day", today.day),
+        days=args.get("days", [today.day]),
         month=args.get("month", today.month),
     )
+    days = sorted(set(validated_args.days))
     sheet_name = MONTH_SHEET_MAPPING[validated_args.month]
-    row_number = validated_args.day + 1
-    formulas = await sheets_client.get_formulas(
-        sheet_name=sheet_name,
-        range_name=f"{CATEGORY_COLUMNS[0]}{row_number}:{TOTAL_COLUMN}{row_number}",
+    ranges = [_day_range_name(sheet_name=sheet_name, day=day) for day in days]
+    formulas = await sheets_client.get_values_for_ranges(
+        ranges=ranges,
+        render_option=ValueRenderOption.formula,
     )
-    values = await sheets_client.get_values(
-        sheet_name=sheet_name,
-        range_name=f"{CATEGORY_COLUMNS[0]}{row_number}:{TOTAL_COLUMN}{row_number}",
+    values = await sheets_client.get_values_for_ranges(
+        ranges=ranges,
+        render_option=ValueRenderOption.unformatted,
     )
-    day_expenses = _day_expenses_from_rows(
-        sheets_client=sheets_client,
-        formula_row=_first_formula_row(formulas),
-        value_row=_first_value_row(values),
-        day=validated_args.day,
-    )
+    day_expenses = [
+        _day_expenses_from_rows(
+            sheets_client=sheets_client,
+            formula_row=_first_formula_row(_range_at(formulas, index)),
+            value_row=_first_value_row(_range_at(values, index)),
+            day=day,
+        )
+        for index, day in enumerate(days)
+    ]
 
     return HarleToolResult(
         called_tool_name="get_day_expenses",
@@ -69,34 +74,37 @@ async def get_day_expenses(args: Mapping[str, object] | None = None) -> HarleToo
             "ok": True,
             "month": validated_args.month,
             "sheet": sheet_name,
-            **day_expenses.model_dump(),
+            "days": [expenses.model_dump() for expenses in day_expenses],
         },
     )
 
 
-async def get_month_expenses(
-    args: Mapping[str, object] | None = None,
-) -> HarleToolResult:
-    args = args or {}
+async def get_month_expenses(args: Mapping[str, object]) -> HarleToolResult:
     sheets_client = GoogleSheetsClient()
     today = _current_expenses_date()
-    validated_args = MonthExpensesArgs(month=args.get("month", today.month))
-    sheet_name = MONTH_SHEET_MAPPING[validated_args.month]
-    values = await sheets_client.get_values(
-        sheet_name=sheet_name,
-        range_name=(
-            f"{CATEGORY_COLUMNS[0]}{FIRST_DAY_ROW}:{TOTAL_COLUMN}{FINAL_TOTAL_ROW}"
-        ),
+    validated_args = MonthExpensesArgs(
+        months=args.get("months", [today.month]),
     )
-    month_expenses = _month_expenses_from_rows(value_rows=values)
+    months = sorted(set(validated_args.months))
+    ranges = [_month_range_name(month=month) for month in months]
+    values = await sheets_client.get_values_for_ranges(
+        ranges=ranges,
+        render_option=ValueRenderOption.unformatted,
+    )
+    month_expenses = [
+        _month_expenses_from_rows(
+            month=month,
+            sheet=MONTH_SHEET_MAPPING[month],
+            value_rows=_range_at(values, index),
+        )
+        for index, month in enumerate(months)
+    ]
 
     return HarleToolResult(
         called_tool_name="get_month_expenses",
         result={
             "ok": True,
-            "month": validated_args.month,
-            "sheet": sheet_name,
-            **month_expenses.model_dump(),
+            "months": [expenses.model_dump() for expenses in month_expenses],
         },
     )
 
@@ -132,13 +140,14 @@ def _day_expenses_from_rows(
 
 def _month_expenses_from_rows(
     *,
+    month: int,
+    sheet: str,
     value_rows: list[list[object]],
 ) -> MonthExpenses:
-    total_row = _value_row_at(
-        value_rows,
-        FINAL_TOTAL_ROW - FIRST_DAY_ROW,
-    )
+    total_row = _first_value_row(value_rows)
     return MonthExpenses(
+        month=month,
+        sheet=sheet,
         category_totals=_category_totals_from_row(total_row),
         total=_row_total(total_row),
     )
@@ -153,8 +162,28 @@ def _category_totals_from_row(row: list[object]) -> dict[str, int | float]:
     return totals
 
 
-def _first_formula_row(rows: list[list[str]]) -> list[str]:
-    return rows[0] if rows else []
+def _day_range_name(*, sheet_name: str, day: int) -> str:
+    row = day + 1
+    return f"'{sheet_name}'!{CATEGORY_COLUMNS[0]}{row}:{TOTAL_COLUMN}{row}"
+
+
+def _month_range_name(*, month: int) -> str:
+    sheet_name = MONTH_SHEET_MAPPING[month]
+    return (
+        f"'{sheet_name}'!"
+        f"{CATEGORY_COLUMNS[0]}{FINAL_TOTAL_ROW}:{TOTAL_COLUMN}{FINAL_TOTAL_ROW}"
+    )
+
+
+def _range_at(
+    ranges: list[list[list[object]]],
+    index: int,
+) -> list[list[object]]:
+    return ranges[index] if index < len(ranges) else []
+
+
+def _first_formula_row(rows: list[list[object]]) -> list[str]:
+    return [str(value or "") for value in _first_value_row(rows)]
 
 
 def _first_value_row(rows: list[list[object]]) -> list[object]:
@@ -197,13 +226,13 @@ def _current_expenses_date() -> datetime:
 GET_DAY_EXPENSES_PROMPT = """
 ## "get_day_expenses" tool
 
-- Tool for reading all the transactions for one day from the expenses spreadsheet.
+- Tool for reading all transactions for one or more days in the same month.
 - Args:
-  - "day": Optional integer of the day to read, from 1 to 31. Defaults to the current day.
+  - "days": Optional array of days to read, from 1 to 31. Defaults to the current day.
   - "month": Optional integer of the month to read, from 1 to 12. Defaults to the current month.
 - Example:
 {
-  "day": 5,
+  "days": [5, 7],
   "month": 7
 }
 - No args example:
@@ -213,12 +242,12 @@ GET_DAY_EXPENSES_PROMPT = """
 GET_MONTH_EXPENSES_PROMPT = """
 ## "get_month_expenses" tool
 
-- Tool for reading the category totals and total amount for one entire month from the expenses spreadsheet.
+- Tool for reading category totals and total amounts for one or more months.
 - Args:
-  - "month": Optional integer of the month to read, from 1 to 12. Defaults to the current month.
+  - "months": Optional array of months to read, from 1 to 12. Defaults to the current month.
 - Example:
 {
-  "month": 7
+  "months": [6, 7]
 }
 - No args example:
 {}"""
@@ -228,6 +257,7 @@ GET_DAY_EXPENSES_TOOL = HarleTool(
     name="get_day_expenses",
     func=get_day_expenses,
     prompt=GET_DAY_EXPENSES_PROMPT,
+    can_run_concurrently=True,
 )
 
 
@@ -235,4 +265,5 @@ GET_MONTH_EXPENSES_TOOL = HarleTool(
     name="get_month_expenses",
     func=get_month_expenses,
     prompt=GET_MONTH_EXPENSES_PROMPT,
+    can_run_concurrently=True,
 )
