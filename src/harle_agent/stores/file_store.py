@@ -3,7 +3,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from harle_agent.models import HarleToolInteraction
+from harle_agent.models import InternalToolCallInteraction
 from harle_agent.settings import CONVERSATIONS_DIR, get_agent_settings
 
 TOKENS_CAP = get_agent_settings().MAX_CONVERSATION_TOKENS
@@ -55,7 +55,7 @@ class FileConversationStore:
     async def save_tool_call(
         self,
         *,
-        interaction: HarleToolInteraction,
+        interaction: InternalToolCallInteraction,
         model: str,
     ) -> None:
         await asyncio.to_thread(
@@ -79,7 +79,7 @@ class FileConversationStore:
     def _save_tool_call_sync(
         self,
         *,
-        interaction: HarleToolInteraction,
+        interaction: InternalToolCallInteraction,
         model: str,
     ) -> None:
         self.conversations_dir.mkdir(parents=True, exist_ok=True)
@@ -131,7 +131,7 @@ def _format_conversation(prompt: str, response_text: str, model: str) -> str:
 
 
 def _format_tool_call_conversation(
-    interaction: HarleToolInteraction,
+    interaction: InternalToolCallInteraction,
     model: str,
 ) -> str:
     created_at = datetime.now().isoformat(timespec="seconds")

@@ -5,7 +5,7 @@ from uuid import UUID
 
 import asyncpg
 
-from harle_agent.models import ConversationRecord, HarleToolInteraction
+from harle_agent.models import ConversationRecord, InternalToolCallInteraction
 from harle_agent.settings import get_agent_settings
 
 TOKENS_CAP = get_agent_settings().MAX_CONVERSATION_TOKENS
@@ -94,7 +94,7 @@ class PostgresConversationStore:
     async def save_tool_call(
         self,
         *,
-        interaction: HarleToolInteraction,
+        interaction: InternalToolCallInteraction,
         model: str,
     ) -> None:
         async with self.pool.acquire() as connection:

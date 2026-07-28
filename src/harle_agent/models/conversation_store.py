@@ -1,6 +1,6 @@
 from typing import Protocol, runtime_checkable
 
-from .harle_tool import HarleToolInteraction
+from .harle_tool import InternalToolCallInteraction
 
 
 @runtime_checkable
@@ -12,6 +12,6 @@ class ConversationStore(Protocol):
     async def save_tool_call(
         self,
         *,
-        interaction: HarleToolInteraction,
+        interaction: InternalToolCallInteraction,
         model: str,
     ) -> None: ...

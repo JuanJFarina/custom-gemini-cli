@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 
 from harle_agent.environment_knowledge import ROSARIO_TIMEZONE
-from harle_agent.models import HarleTool, HarleToolResult
+from harle_agent.models import HarleTool, ToolCallResult
 
 from .utils import (
     MONTH_SHEET_MAPPING,
@@ -25,7 +25,7 @@ class AddOneTimeTransactionArgs(TransactionArgs):
         )
 
 
-async def add_one_time_transaction(args: dict[str, Any]) -> HarleToolResult:
+async def add_one_time_transaction(args: dict[str, Any]) -> ToolCallResult:
     sheets_client = GoogleSheetsClient()
     validated_args = AddOneTimeTransactionArgs.from_args(args)
     cell = f"{validated_args.category}{validated_args.day + 1}"
@@ -46,7 +46,7 @@ async def add_one_time_transaction(args: dict[str, Any]) -> HarleToolResult:
         formula=new_formula,
     )
 
-    return HarleToolResult(
+    return ToolCallResult(
         called_tool_name="add_one_time_transaction",
         result={
             "ok": True,

@@ -2,7 +2,7 @@ from collections.abc import Mapping
 
 from pydantic import BaseModel
 
-from harle_agent.models import HarleTool, HarleToolResult
+from harle_agent.models import HarleTool, ToolCallResult
 
 from .utils import (
     MONTH_SHEET_MAPPING,
@@ -33,7 +33,7 @@ class TransactionRemoval(BaseModel):
     duplicate_matches: int
 
 
-async def remove_or_update_transaction(args: Mapping[str, object]) -> HarleToolResult:
+async def remove_or_update_transaction(args: Mapping[str, object]) -> ToolCallResult:
     sheets_client = GoogleSheetsClient()
     validated_args = RemoveOrUpdateTransactionArgs(**args)
     removal = await _transaction_removal(
@@ -196,8 +196,8 @@ def _signed_amount(transaction: Transaction) -> int:
     return -transaction.amount if transaction.is_refund else transaction.amount
 
 
-def _not_found_result(removal: TransactionRemoval) -> HarleToolResult:
-    return HarleToolResult(
+def _not_found_result(removal: TransactionRemoval) -> ToolCallResult:
+    return ToolCallResult(
         called_tool_name="remove_or_update_transaction",
         result={
             "ok": False,
@@ -215,8 +215,8 @@ def _result(
     new_transaction: Transaction | None,
     duplicate_matches: int,
     updates: list[FormulaUpdate],
-) -> HarleToolResult:
-    return HarleToolResult(
+) -> ToolCallResult:
+    return ToolCallResult(
         called_tool_name="remove_or_update_transaction",
         result={
             "ok": True,

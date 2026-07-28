@@ -15,28 +15,28 @@ class ToolCall(BaseModel):
     tool_args: dict[str, Any]
 
 
-class HarleToolCall(BaseModel):
+class ToolCallAction(BaseModel):
     action: Literal["call_tool"]
     calls: list[ToolCall] = Field(min_length=1, max_length=5)
 
 
-class HarleToolResult(BaseModel):
+class ToolCallResult(BaseModel):
     called_tool_name: str
     result: Any
 
 
-class HarleToolInteraction(BaseModel):
+class InternalToolCallInteraction(BaseModel):
     tool_calls: list[ToolCall]
-    tool_results: list[HarleToolResult]
+    tool_results: list[ToolCallResult]
 
     @property
-    def tool_call_response(self) -> HarleToolCall:
-        return HarleToolCall(action="call_tool", calls=self.tool_calls)
+    def tool_call_response(self) -> ToolCallAction:
+        return ToolCallAction(action="call_tool", calls=self.tool_calls)
 
 
 class HarleTool(BaseModel):
     name: str
-    func: Callable[..., Awaitable[HarleToolResult]]
+    func: Callable[..., Awaitable[ToolCallResult]]
     prompt: str
     can_run_concurrently: bool
 

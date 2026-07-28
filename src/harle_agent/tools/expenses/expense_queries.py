@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from gspread.utils import ValueRenderOption
 from pydantic import BaseModel
 
-from harle_agent.models import HarleTool, HarleToolResult
+from harle_agent.models import HarleTool, ToolCallResult
 
 from .utils import (
     CATEGORY_COLUMNS,
@@ -34,13 +34,12 @@ class DayExpenses(BaseModel):
 
 
 class MonthExpenses(BaseModel):
-    month: int
     sheet: str
     category_totals: dict[str, int | float]
     total: int | float
 
 
-async def get_day_expenses(args: Mapping[str, object]) -> HarleToolResult:
+async def get_day_expenses(args: Mapping[str, object]) -> ToolCallResult:
     sheets_client = GoogleSheetsClient()
     today = _current_expenses_date()
     validated_args = DayExpensesArgs(
@@ -68,7 +67,7 @@ async def get_day_expenses(args: Mapping[str, object]) -> HarleToolResult:
         for index, day in enumerate(days)
     ]
 
-    return HarleToolResult(
+    return ToolCallResult(
         called_tool_name="get_day_expenses",
         result={
             "ok": True,
@@ -79,7 +78,7 @@ async def get_day_expenses(args: Mapping[str, object]) -> HarleToolResult:
     )
 
 
-async def get_month_expenses(args: Mapping[str, object]) -> HarleToolResult:
+async def get_month_expenses(args: Mapping[str, object]) -> ToolCallResult:
     sheets_client = GoogleSheetsClient()
     today = _current_expenses_date()
     validated_args = MonthExpensesArgs(
@@ -93,14 +92,13 @@ async def get_month_expenses(args: Mapping[str, object]) -> HarleToolResult:
     )
     month_expenses = [
         _month_expenses_from_rows(
-            month=month,
             sheet=MONTH_SHEET_MAPPING[month],
             value_rows=_range_at(values, index),
         )
         for index, month in enumerate(months)
     ]
 
-    return HarleToolResult(
+    return ToolCallResult(
         called_tool_name="get_month_expenses",
         result={
             "ok": True,
@@ -140,13 +138,11 @@ def _day_expenses_from_rows(
 
 def _month_expenses_from_rows(
     *,
-    month: int,
     sheet: str,
     value_rows: list[list[object]],
 ) -> MonthExpenses:
     total_row = _first_value_row(value_rows)
     return MonthExpenses(
-        month=month,
         sheet=sheet,
         category_totals=_category_totals_from_row(total_row),
         total=_row_total(total_row),

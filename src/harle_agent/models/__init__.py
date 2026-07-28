@@ -10,11 +10,11 @@ from .harle_models import (
 )
 from .harle_tool import (
     HarleTool,
-    HarleToolCall,
-    HarleToolInteraction,
-    HarleToolResult,
     HarleToolStore,
+    InternalToolCallInteraction,
     ToolCall,
+    ToolCallAction,
+    ToolCallResult,
 )
 
 __all__ = [
@@ -28,8 +28,8 @@ __all__ = [
     "HarleThoughtAdapter",
     "HarleToolStore",
     "HarleTool",
-    "HarleToolResult",
-    "HarleToolCall",
-    "HarleToolInteraction",
+    "ToolCallResult",
+    "ToolCallAction",
+    "InternalToolCallInteraction",
     "ToolCall",
 ]
