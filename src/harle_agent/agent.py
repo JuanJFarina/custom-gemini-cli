@@ -1,5 +1,6 @@
 import re
 from asyncio import Task, create_task, gather
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from time import time
 from typing import Any
@@ -25,9 +26,9 @@ from .models import (
     HarleStores,
     HarleThought,
     HarleThoughtAdapter,
-    HarleToolCall,
-    HarleToolInteraction,
-    HarleToolResult,
+    InternalToolCallInteraction,
+    ToolCall,
+    ToolCallResult,
 )
 from .prompts import SYSTEM_PROMPT
 from .retry_decorator import retry
@@ -73,11 +74,11 @@ class Harle(BaseModel):
         self,
         prompt: str,
         system_instruction: str,
-        tool_interactions: list[HarleToolInteraction] | None = None,
+        tool_interactions: list[InternalToolCallInteraction] | None = None,
     ) -> HarleRunResult:
         tool_interactions = tool_interactions or []
         tool_results = _tool_results(tool_interactions)
-        if len(tool_results) >= SETTINGS.MAX_LOOPS:
+        if len(tool_interactions) >= SETTINGS.MAX_LOOPS:
             return HarleRunResult(
                 response_text=(
                     "I'm looping infinitely, these are the tool results so far: "
@@ -102,10 +103,10 @@ class Harle(BaseModel):
             )
 
         if harle_thought.action == "call_tool":
-            result = await self._call_tool(harle_thought)
-            interaction = HarleToolInteraction(
-                tool_call=harle_thought,
-                tool_result=result,
+            results = await self._call_tools_in_batches(harle_thought.calls)
+            interaction = InternalToolCallInteraction(
+                tool_calls=harle_thought.calls,
+                tool_results=results,
             )
             return await self._reason_and_act(
                 prompt=prompt,
@@ -123,7 +124,7 @@ class Harle(BaseModel):
         self,
         system_instruction: str,
         prompt: str,
-        tool_results: list[HarleToolResult],
+        tool_results: list[ToolCallResult],
     ) -> HarleThought:
         for result in tool_results:
             prompt = self._update_prompt(prompt=prompt, tool_result=result)
@@ -182,12 +183,27 @@ class Harle(BaseModel):
             model=self.config.model,
         )
 
+    async def _call_tools_in_batches(
+        self,
+        calls: list[ToolCall],
+    ) -> list[ToolCallResult]:
+        results: list[ToolCallResult] = []
+        concurrent_calls: list[ToolCall] = []
+        for call in calls:
+            tool = self.stores.tool_store.get(call.tool_name)
+            if tool.can_run_concurrently:
+                concurrent_calls.append(call)
+                continue
+            results.append(await self._call_tool(call))
+        results.extend(
+            await _call_concurrently(concurrent_calls, self._call_tool),
+        )
+        return results
+
     @retry
-    async def _call_tool(self, tool_call: HarleToolCall) -> HarleToolResult:
-        tool = self.stores.tool_store.get(tool_call.tool_name)
-        result = await tool.func(tool_call.tool_args)
-        log.info(f"Tool {tool.name} called successfully")
-        return result
+    async def _call_tool(self, call: ToolCall) -> ToolCallResult:
+        tool = self.stores.tool_store.get(call.tool_name)
+        return await tool.func(call.tool_args)
 
     def _extract_json_object(self, text: str) -> str:
         stripped = text.strip()
@@ -201,7 +217,7 @@ class Harle(BaseModel):
             return stripped
         return stripped[start : end + 1]
 
-    def _update_prompt(self, prompt: str, tool_result: HarleToolResult) -> str:
+    def _update_prompt(self, prompt: str, tool_result: ToolCallResult) -> str:
         return f"""
             Original user message:
             {prompt}
@@ -229,6 +245,14 @@ class Harle(BaseModel):
         return system_instruction
 
 
+async def _call_concurrently(
+    calls: list[ToolCall],
+    call_func: Callable[[ToolCall], Awaitable[ToolCallResult]],
+) -> list[ToolCallResult]:
+    coroutines = [call_func(call) for call in calls]
+    return await gather(*coroutines)
+
+
 def _load_personal_history(path: Path) -> str:
     if not path.is_file():
         log.warning(f"Personal history file {path} does not exist")
@@ -241,6 +265,10 @@ def _load_personal_history(path: Path) -> str:
 
 
 def _tool_results(
-    tool_interactions: list[HarleToolInteraction],
-) -> list[HarleToolResult]:
-    return [interaction.tool_result for interaction in tool_interactions]
+    tool_interactions: list[InternalToolCallInteraction],
+) -> list[ToolCallResult]:
+    return [
+        result
+        for interaction in tool_interactions
+        for result in interaction.tool_results
+    ]

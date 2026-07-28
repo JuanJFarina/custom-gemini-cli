@@ -1,4 +1,9 @@
+from typing import Annotated
+
 from pydantic import BaseModel, Field
+
+DayNumber = Annotated[int, Field(ge=1, le=31)]
+MonthNumber = Annotated[int, Field(ge=1, le=12)]
 
 
 class TransactionArgs(BaseModel):
@@ -24,23 +29,21 @@ class Transaction(TransactionArgs):
 
 
 class DayExpensesArgs(BaseModel):
-    day: int = Field(
-        description="The day of the expenses query, from 1 to 31.",
-        ge=1,
-        le=31,
+    days: list[DayNumber] = Field(
+        description="Day or days of the expenses query, from 1 to 31.",
+        min_length=1,
+        max_length=31,
     )
-    month: int = Field(
+    month: MonthNumber = Field(
         description="The month of the expenses query, from 1 to 12.",
-        ge=1,
-        le=12,
     )
 
 
 class MonthExpensesArgs(BaseModel):
-    month: int = Field(
-        description="The month of the expenses query, from 1 to 12.",
-        ge=1,
-        le=12,
+    months: list[MonthNumber] = Field(
+        description="Month or months of the expenses query, from 1 to 12.",
+        min_length=1,
+        max_length=12,
     )
 
 

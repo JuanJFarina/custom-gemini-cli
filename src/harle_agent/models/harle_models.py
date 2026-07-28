@@ -5,7 +5,11 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from harle_agent.settings import get_agent_settings
 
 from .conversation_store import ConversationStore
-from .harle_tool import HarleToolCall, HarleToolInteraction, HarleToolStore
+from .harle_tool import (
+    HarleToolStore,
+    InternalToolCallInteraction,
+    ToolCallAction,
+)
 
 
 class HarleConfig(BaseModel):
@@ -19,7 +23,7 @@ class HarleResponse(BaseModel):
 
 
 HarleThought = Annotated[
-    HarleResponse | HarleToolCall,
+    HarleResponse | ToolCallAction,
     Field(discriminator="action"),
 ]
 
@@ -35,4 +39,6 @@ class HarleStores(BaseModel):
 
 class HarleRunResult(BaseModel):
     response_text: str
-    tool_interactions: list[HarleToolInteraction] = Field(default_factory=list)
+    tool_interactions: list[InternalToolCallInteraction] = Field(
+        default_factory=list,
+    )

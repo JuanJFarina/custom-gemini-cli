@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
-from harle_agent.models import ConversationRecord, HarleToolInteraction
+from harle_agent.models import ConversationRecord, InternalToolCallInteraction
 from harle_agent.settings import get_agent_settings
 
 TOKENS_CAP = get_agent_settings().MAX_CONVERSATION_TOKENS
@@ -75,7 +75,7 @@ class SQLiteConversationStore:
     async def save_tool_call(
         self,
         *,
-        interaction: HarleToolInteraction,
+        interaction: InternalToolCallInteraction,
         model: str,
     ) -> None:
         await asyncio.to_thread(
@@ -117,7 +117,7 @@ class SQLiteConversationStore:
     def _save_tool_call_sync(
         self,
         *,
-        interaction: HarleToolInteraction,
+        interaction: InternalToolCallInteraction,
         model: str,
     ) -> None:
         self._ensure_schema()
@@ -148,8 +148,13 @@ class SQLiteConversationStore:
                         model,
                         created_at,
                         "tool_call",
-                        json.dumps(interaction.tool_call.model_dump()),
-                        json.dumps(interaction.tool_result.model_dump()),
+                        json.dumps(interaction.tool_call_response.model_dump()),
+                        json.dumps(
+                            [
+                                result.model_dump()
+                                for result in interaction.tool_results
+                            ],
+                        ),
                     ),
                 )
 

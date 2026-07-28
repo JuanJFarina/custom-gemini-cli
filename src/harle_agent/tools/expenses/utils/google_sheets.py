@@ -47,6 +47,17 @@ class FormulaRemovalResult:
     duplicate_matches: int
 
 
+class BatchValueRange(BaseModel):
+    values: SheetValueRows = Field(default_factory=list)
+
+
+class BatchValuesResponse(BaseModel):
+    value_ranges: list[BatchValueRange] = Field(
+        default_factory=list,
+        alias="valueRanges",
+    )
+
+
 class GoogleSheetsClient(BaseModel):
     settings: AgentSettings = Field(default_factory=get_agent_settings)
     _spreadsheets: dict[TargetYear, Spreadsheet] = PrivateAttr(
@@ -184,6 +195,36 @@ class GoogleSheetsClient(BaseModel):
             value_render_option=ValueRenderOption.unformatted,
         )
         return [list(row) for row in values]
+
+    async def get_values_for_ranges(
+        self,
+        *,
+        ranges: list[RangeName],
+        render_option: ValueRenderOption,
+        target_spreadsheet: TargetYear = "current_year",
+    ) -> list[SheetValueRows]:
+        return await asyncio.to_thread(
+            self._get_values_for_ranges_sync,
+            ranges=ranges,
+            render_option=render_option,
+            target_spreadsheet=target_spreadsheet,
+        )
+
+    def _get_values_for_ranges_sync(
+        self,
+        *,
+        ranges: list[RangeName],
+        render_option: ValueRenderOption,
+        target_spreadsheet: TargetYear,
+    ) -> list[SheetValueRows]:
+        response = self.get_spreadsheet(
+            target_spreadsheet=target_spreadsheet,
+        ).values_batch_get(
+            ranges,
+            params={"valueRenderOption": render_option},
+        )
+        validated_response = BatchValuesResponse.model_validate(response)
+        return [value_range.values for value_range in validated_response.value_ranges]
 
     async def update_formula(
         self,

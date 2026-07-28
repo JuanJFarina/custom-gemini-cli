@@ -17,4 +17,5 @@ SHARED_PROMPT_TOOL = HarleTool(
     name="shared_prompt",
     func=lambda: "",
     prompt=SHARED_EXPENSES_TOOLS_PROMPT,
+    can_run_concurrently=True,
 )

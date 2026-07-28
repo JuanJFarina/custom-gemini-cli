@@ -4,7 +4,7 @@ from typing import Any
 from pydantic import Field
 
 from harle_agent.environment_knowledge import ROSARIO_TIMEZONE
-from harle_agent.models import HarleTool, HarleToolResult
+from harle_agent.models import HarleTool, ToolCallResult
 
 from .utils import (
     MONTH_SHEET_MAPPING,
@@ -29,7 +29,7 @@ class AddInInstallmentsTransactionArgs(TransactionArgs):
         )
 
 
-async def add_in_installments_transaction(args: dict[str, Any]) -> HarleToolResult:
+async def add_in_installments_transaction(args: dict[str, Any]) -> ToolCallResult:
     sheets_client = GoogleSheetsClient()
     validated_args = AddInInstallmentsTransactionArgs.from_args(args)
     installment_amount = validated_args.amount / validated_args.installments
@@ -76,7 +76,7 @@ async def add_in_installments_transaction(args: dict[str, Any]) -> HarleToolResu
             },
         )
 
-    return HarleToolResult(
+    return ToolCallResult(
         called_tool_name="add_in_installments_transaction",
         result={
             "ok": True,
@@ -111,4 +111,5 @@ ADD_IN_INSTALLMENTS_TRANSACTION_TOOL = HarleTool(
     name="add_in_installments_transaction",
     func=add_in_installments_transaction,
     prompt=ADD_IN_INSTALLMENTS_TRANSACTION_PROMPT,
+    can_run_concurrently=False,
 )
