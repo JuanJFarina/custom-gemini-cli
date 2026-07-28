@@ -31,7 +31,7 @@ from .models import (
     ToolCallResult,
 )
 from .prompts import SYSTEM_PROMPT
-from .retry_decorator import ASSISTANT_FAILURES, retry
+from .retry_decorator import retry
 from .settings import PERSONAL_HISTORY_PATH, get_agent_settings
 from .tools import TOOLS, show_tool_results
 
@@ -103,7 +103,7 @@ class Harle(BaseModel):
             )
 
         if harle_thought.action == "call_tool":
-            results = await self._call_tools(harle_thought.calls)
+            results = await self._call_tools_in_batches(harle_thought.calls)
             interaction = InternalToolCallInteraction(
                 tool_calls=harle_thought.calls,
                 tool_results=results,
@@ -183,7 +183,10 @@ class Harle(BaseModel):
             model=self.config.model,
         )
 
-    async def _call_tools(self, calls: list[ToolCall]) -> list[ToolCallResult]:
+    async def _call_tools_in_batches(
+        self,
+        calls: list[ToolCall],
+    ) -> list[ToolCallResult]:
         results: list[ToolCallResult] = []
         concurrent_calls: list[ToolCall] = []
         for call in calls:
@@ -197,18 +200,10 @@ class Harle(BaseModel):
         )
         return results
 
+    @retry
     async def _call_tool(self, call: ToolCall) -> ToolCallResult:
         tool = self.stores.tool_store.get(call.tool_name)
-        try:
-            result = await tool.func(call.tool_args)
-        except ASSISTANT_FAILURES as error:
-            log.error(f"Tool {tool.name} failed: {error}")
-            return ToolCallResult(
-                called_tool_name=tool.name,
-                result={"error": f"{error}. Don't retry."},
-            )
-        log.info(f"Tool {tool.name} called successfully")
-        return result
+        return await tool.func(call.tool_args)
 
     def _extract_json_object(self, text: str) -> str:
         stripped = text.strip()
@@ -252,9 +247,9 @@ class Harle(BaseModel):
 
 async def _call_concurrently(
     calls: list[ToolCall],
-    call_tool: Callable[[ToolCall], Awaitable[ToolCallResult]],
+    call_func: Callable[[ToolCall], Awaitable[ToolCallResult]],
 ) -> list[ToolCallResult]:
-    coroutines = [call_tool(call) for call in calls]
+    coroutines = [call_func(call) for call in calls]
     return await gather(*coroutines)
 
 
