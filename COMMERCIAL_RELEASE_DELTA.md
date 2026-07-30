@@ -6,7 +6,11 @@ The first commercial version is Telegram-only and runs as one FastAPI process.
 
 FastAPI maps Telegram identities to internal Harle users and performs all pre-flight checks. Registration and payment remain in the external product, while the synchronized plan and subscription status are stored on the Harle user record.
 
-FastAPI shared state is limited to disposable process-level data such as temporary bans and in-flight request counts. Users, plans, conversations, profiles, and integrations remain in PostgreSQL or request-scoped objects.
+The first version includes PostgreSQL-backed internal expense tracking for commercial users and an internal calendar-like event capability for every user. The existing Google Sheets expense tools remain available only to Juan José Farina's stable internal user UUID as a private legacy capability; they are not part of the commercial product.
+
+Multi-user Google Sheets integration and Google Calendar integration are reserved for the second commercial version.
+
+FastAPI shared state is limited to disposable process-level data such as temporary bans and in-flight request counts. Users, plans, conversations, profiles, internal events, and integrations remain in PostgreSQL or request-scoped objects.
 
 Harle remains request-scoped rather than becoming a singleton.
 
@@ -69,17 +73,37 @@ The pre-flight policy should be encapsulated behind a clear service boundary so 
 
 **Required:** Use the resolved user's UUID for every conversation and tool-interaction query and write. Prove isolation through integration tests.
 
-### Finance Integration Isolation
+### Internal Expense Persistence
 
-**Current:** Spreadsheet IDs and Google credentials are global environment settings.
+**Current:** Expense data is stored only in Juan José Farina's Google Sheets tracker.
 
-**Required:** Store each user's integration configuration and encrypted credentials, then inject a user-scoped Google Sheets client into finance tools.
+**Required:** Persist commercial users' expense transactions in PostgreSQL under the owning user UUID. Preserve the existing operations for one-time expenses and refunds, installment expenses, daily and monthly queries, and transaction corrections.
+
+Internal expense records must include ownership, amount, currency, category, transaction date, description, status, installment grouping when applicable, and creation and update timestamps. Queries must be indexed by user and transaction date, and every modifying operation must be audited.
+
+### Juan-Only Google Sheets Expenses
+
+**Current:** Spreadsheet IDs, service-account credentials, and Google Sheets tool functions are global.
+
+**Required:** Keep the existing Google Sheets expense implementation only for Juan José Farina's stable internal user UUID. Google Sheets tools must not be constructed, described to the model, or executable for any other user.
+
+The service-account credentials and spreadsheet IDs may remain process configuration for this private capability. A fail-fast authorization guard must verify the configured internal user UUID before creating the Google Sheets client and again before executing a modifying tool. Multi-user Google Sheets credentials, OAuth, onboarding, and storage are not first-version work.
+
+### Internal Event Persistence
+
+**Current:** There is no calendar or event persistence.
+
+**Required:** Persist calendar-like events in PostgreSQL under the owning user UUID. Harle may query events by date range and create, update, cancel, or delete events only after a direct user request or confirmation of a proposed action.
+
+The event model must include ownership, title, description, start time, end time, timezone, status, and creation and update timestamps. Event queries must be indexed by user and start time, and every modifying operation must be audited.
+
+The first version supports passive, one-time events. Recurrence, attendees, reminders, notifications, external synchronization, and proactive event processing remain deferred.
 
 ### Write Authorization and Audit
 
 **Current:** Any modifying tool call selected by the model executes immediately.
 
-**Required:** Distinguish direct user requests from inferred modifications. Persist inferred writes as expiring proposed actions and audit every executed change.
+**Required:** Distinguish direct user requests from inferred modifications. Persist inferred writes as expiring proposed actions and audit every executed change, including internal expenses, internal events, and Juan's legacy Google Sheets changes.
 
 ### Telegram Idempotency and Ordering
 
@@ -173,8 +197,11 @@ Persistent product state remains in PostgreSQL:
 - Telegram external identities
 - User profiles and memories
 - Conversations and tool interactions
-- Integration settings and encrypted credentials
+- Internal expense transactions
+- Internal calendar-like events
 - Proposed actions and action audits
+
+Juan's private Google Sheets service-account credentials and spreadsheet IDs remain in process configuration and are never exposed to another user's runtime.
 
 ## Recommended Implementation Order
 
@@ -187,12 +214,15 @@ Persistent product state remains in PostgreSQL:
 - Pass a request-scoped user runtime instead of a startup owner.
 - Reach a vertical slice with two manually provisioned test users.
 
-### 2. User-Owned Context and Integrations
+### 2. User-Owned Context and Tools
 
 - Move personal history and profile data from the global file into user-owned storage.
 - Parameterize prompts and remove Juan-specific persistence keys.
-- Scope conversations, tool interactions, spreadsheet IDs, and credentials to user UUID.
-- Inject configured tool clients instead of constructing them from global settings.
+- Scope conversations, tool interactions, internal expenses, and internal events to user UUID.
+- Add a PostgreSQL expense store and internal expense tool family for commercial users.
+- Add a PostgreSQL event store and request-driven tools for querying, creating, updating, cancelling, and deleting internal events.
+- Add user-scoped tool-family authorization and inject only the tool families permitted for the resolved user.
+- Keep the current Google Sheets expense family behind Juan's configured internal user UUID and process-level credentials.
 
 ### 3. Action Safety and Durable Delivery
 
@@ -217,9 +247,17 @@ Persistent product state remains in PostgreSQL:
 
 Define how the external registration and payment product updates the local plan and subscription status, including stale-state and failed-payment behavior.
 
-### Google Sheets Authentication
+### Internal Expense Policy
 
-Prefer per-user OAuth for a broad launch. A shared application service account with user-owned spreadsheet IDs is acceptable only for a controlled beta.
+Define the supported currencies, category customization, installment correction behavior, soft deletion, export format, and whether amounts are stored in their original currency only or also normalized for reporting.
+
+### Juan Legacy Tool Access
+
+Provision and preserve Juan José Farina's stable internal UUID, define how it is configured in each environment, and exercise a negative test proving that every other user is denied the Google Sheets tool family.
+
+### Internal Event Policy
+
+Define timezone and all-day-event behavior, whether users may hard-delete events or only cancel them, and how long cancelled events remain available. Recurrence, attendees, reminders, notifications, and external synchronization are second-version concerns.
 
 ### Confirmation Experience
 
@@ -233,12 +271,22 @@ Define retention, deletion SLA, export format, backup retention, and supported o
 
 Confirm plan names, monthly limits, UTC reset behavior, upgrades, downgrades, refunds for internal failures, and whether unused requests carry over.
 
-## Explicitly Deferred
+## Second-Version Google Integrations
+
+The second commercial version adds multi-user Google Sheets and Google Calendar integrations. Each user connects a Google account through OAuth, with encrypted refresh credentials, selected spreadsheet or calendar settings, least-privilege scopes, and a revocation flow.
+
+Harle may read authorized Google data on request and may modify spreadsheets or calendar events only after a direct user request or confirmation of a proposed action. Every modifying operation remains auditable and idempotent.
+
+Before implementation, define whether internal expenses and events remain the sources of truth, Google services become the sources of truth, or the systems synchronize. The design must also define conflict resolution, recurring events, attendee invitations, spreadsheet compatibility, and ownership of OAuth callbacks and token refresh.
+
+## Explicitly Deferred From the First Version
 
 - Multi-message turn aggregation or response cancellation
-- Selective tool loading while only one small tool family exists
+- Relevance-based tool selection beyond the required per-user authorization filtering
 - Proactive scheduling and autonomous check-ins
-- Reminders and calendar integration
+- Custom reminders and reminder delivery
+- Multi-user Google Sheets integration and synchronization
+- Google Calendar integration, synchronization, polling, and notifications
 - Instagram, WhatsApp, and other communication channels
 - Model routing
 - Commercial CLI access
@@ -249,14 +297,16 @@ The first version preserves the current immediate one-message, one-response beha
 
 ## Definition of Releasable
 
-- Two users cannot read or modify each other's conversations, profiles, memories, credentials, or spreadsheets.
+- Two users cannot read or modify each other's conversations, profiles, memories, internal expenses, or internal events.
 - An unknown, inactive, or unsubscribed Telegram identity never invokes Gemini or any integration.
-- A duplicate Telegram update creates no duplicate response, expense, or audit entry.
+- A duplicate Telegram update creates no duplicate response, finance change, internal-event change, or audit entry.
 - Ten valid messages inside any rolling two-second window temporarily ban only that Telegram identity.
 - Temporarily banned attempts do not invoke Gemini or consume monthly quota.
 - Monthly quota checks count only successful conversation rows, exclude tool-call rows, include in-flight requests, and expose remaining usage.
 - An inferred modifying action waits for confirmation.
 - An explicitly requested modifying action is validated and auditable.
+- No user other than Juan's configured internal UUID can receive or execute a Google Sheets tool.
+- Event queries return only the requesting user's internal events, and every event modification is user-authorized and auditable.
 - A process restart does not lose accepted work that was promised to the user.
 - Deleting an account removes or anonymizes all user-owned data according to the retention policy.
 - Logs and metrics contain no conversation bodies, personal-history content, access tokens, or integration payloads.
@@ -270,7 +320,9 @@ Launch as a controlled paid beta with:
 - One FastAPI process
 - PostgreSQL-only production persistence
 - Telegram as the sole channel
-- One user-scoped finance integration
+- PostgreSQL-backed internal expense tracking for commercial users
+- One request-driven, user-scoped internal event capability
+- Juan-only legacy Google Sheets expense tracking outside the commercial offering
 - Automatic per-user safety bans
 - Plan-based monthly quotas
 
