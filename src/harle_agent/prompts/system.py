@@ -32,7 +32,7 @@ Schema 1 for responding to Juan:
   "response": "Your response to Juan"
 }}
 
-Schema 2 for calling one or more tools once or more times (example with "add_one_time_transaction" tool):
+Schema 2 for one or more tool calls (example with "add_one_time_transaction" tool):
 {{
   "action": "call_tool",
   "calls": [
