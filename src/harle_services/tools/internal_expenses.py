@@ -202,7 +202,8 @@ def create_internal_expenses_registration(
             return ToolCallResult(
                 called_tool_name="add_expense",
                 result=_creation_payload(
-                    result.transactions, result.used_previous_day_rule
+                    result.transactions,
+                    result.used_previous_day_rule,
                 ),
             )
 
@@ -220,7 +221,8 @@ def create_internal_expenses_registration(
             return ToolCallResult(
                 called_tool_name="add_refund",
                 result=_creation_payload(
-                    result.transactions, result.used_previous_day_rule
+                    result.transactions,
+                    result.used_previous_day_rule,
                 ),
             )
 
@@ -243,7 +245,8 @@ def create_internal_expenses_registration(
             return ToolCallResult(
                 called_tool_name="add_installment_expense",
                 result=_creation_payload(
-                    result.transactions, result.used_previous_day_rule
+                    result.transactions,
+                    result.used_previous_day_rule,
                 ),
             )
 

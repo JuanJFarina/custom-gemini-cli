@@ -14,6 +14,7 @@ from harle_domain.accounts import (
     SubscriptionStatus,
     User,
 )
+from harle_domain.events import EventRepository
 from harle_domain.expenses import ExpenseRepository
 from harle_domain.tools import (
     ToolCall,
@@ -70,6 +71,7 @@ def resolved_user(user_id: UUID) -> ResolvedUser:
 def test_tool_access_matrix_and_lazy_sheets_configuration() -> None:
     juan_id = uuid4()
     expense_repository = cast(ExpenseRepository, object())
+    event_repository = cast(EventRepository, object())
     incomplete_settings = LegacyGoogleSheetsSettings(
         _env_file=None,
         LEGACY_GOOGLE_SHEETS_USER_ID=juan_id,
@@ -77,6 +79,7 @@ def test_tool_access_matrix_and_lazy_sheets_configuration() -> None:
     commercial_store = create_tools_injector(
         incomplete_settings,
         expense_repository=expense_repository,
+        event_repository=event_repository,
     ).inject(
         resolved_user(uuid4()),
         timezone="America/Argentina/Cordoba",
@@ -90,6 +93,11 @@ def test_tool_access_matrix_and_lazy_sheets_configuration() -> None:
         "summarize_expenses",
         "update_expense",
         "delete_expense",
+        "list_events",
+        "create_event",
+        "update_event",
+        "cancel_event",
+        "delete_event",
     }
     assert "Google Sheets" not in commercial_store.prompt
     assert "add_one_time_transaction" not in SYSTEM_PROMPT
@@ -106,6 +114,7 @@ def test_tool_access_matrix_and_lazy_sheets_configuration() -> None:
     juan_store = create_tools_injector(
         configured_settings,
         expense_repository=expense_repository,
+        event_repository=event_repository,
     ).inject(
         resolved_user(juan_id),
         timezone="America/Argentina/Cordoba",
@@ -117,6 +126,11 @@ def test_tool_access_matrix_and_lazy_sheets_configuration() -> None:
         "get_day_expenses",
         "get_month_expenses",
         "remove_or_update_transaction",
+        "list_events",
+        "create_event",
+        "update_event",
+        "cancel_event",
+        "delete_event",
     }
 
 

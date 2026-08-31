@@ -20,8 +20,18 @@ class ToolAccessPolicy:
         ):
             return frozenset()
         if user.id == self.legacy_google_sheets_user_id:
-            return frozenset({ToolFamily.LEGACY_GOOGLE_SHEETS_EXPENSES})
-        return frozenset({ToolFamily.INTERNAL_EXPENSES})
+            return frozenset(
+                {
+                    ToolFamily.INTERNAL_EVENTS,
+                    ToolFamily.LEGACY_GOOGLE_SHEETS_EXPENSES,
+                },
+            )
+        return frozenset(
+            {
+                ToolFamily.INTERNAL_EVENTS,
+                ToolFamily.INTERNAL_EXPENSES,
+            },
+        )
 
     def authorized_families_for_user_id(
         self,

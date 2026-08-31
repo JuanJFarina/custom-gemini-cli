@@ -40,6 +40,12 @@ EMPTY_TOOLS = ToolsInjector(
                 definitions=(),
                 handler_factory=lambda _: {},
             ),
+            ToolFamilyRegistration(
+                family=ToolFamily.INTERNAL_EVENTS,
+                instructions="No event tools are configured.",
+                definitions=(),
+                handler_factory=lambda _: {},
+            ),
         ),
     ),
     access_policy=ToolAccessPolicy(legacy_google_sheets_user_id=None),
