@@ -19,15 +19,14 @@ class ToolAccessPolicy:
             or user.subscription_status is not SubscriptionStatus.ACTIVE
         ):
             return frozenset()
-        return self.authorized_families_for_user_id(user.id)
+        if user.id == self.legacy_google_sheets_user_id:
+            return frozenset({ToolFamily.LEGACY_GOOGLE_SHEETS_EXPENSES})
+        return frozenset({ToolFamily.INTERNAL_EXPENSES})
 
     def authorized_families_for_user_id(
         self,
         user_id: UUID,
     ) -> frozenset[ToolFamily]:
-        if (
-            self.legacy_google_sheets_user_id is None
-            or user_id != self.legacy_google_sheets_user_id
-        ):
+        if user_id != self.legacy_google_sheets_user_id:
             return frozenset()
         return frozenset({ToolFamily.LEGACY_GOOGLE_SHEETS_EXPENSES})

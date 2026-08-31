@@ -7,6 +7,9 @@ from harle_infrastructure.postgres.repositories.conversations import (
     PostgresConversationRepository,
     PostgresConversationStore,
 )
+from harle_infrastructure.postgres.repositories.expenses import (
+    PostgresExpenseRepository,
+)
 from harle_infrastructure.postgres.repositories.profiles import (
     PostgresAssistantProfileRepository,
     PostgresUserProfileRepository,
@@ -19,6 +22,7 @@ __all__ = [
     "PostgresAssistantProfileRepository",
     "PostgresConversationRepository",
     "PostgresConversationStore",
+    "PostgresExpenseRepository",
     "PostgresUserProfileRepository",
     "create_postgres_pool",
     "validate_postgres_schema",

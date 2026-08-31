@@ -1,10 +1,12 @@
 import asyncio
 from datetime import datetime, timezone
+from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
 from pydantic import BaseModel
 
+from harle_agent.prompts import SYSTEM_PROMPT
 from harle_domain.accounts import (
     ExternalIdentity,
     Plan,
@@ -12,6 +14,7 @@ from harle_domain.accounts import (
     SubscriptionStatus,
     User,
 )
+from harle_domain.expenses import ExpenseRepository
 from harle_domain.tools import (
     ToolCall,
     ToolDefinition,
@@ -24,7 +27,6 @@ from harle_infrastructure.google_sheets import (
     GoogleSheetsConnectionSettings,
     LegacyGoogleSheetsSettings,
 )
-from harle_agent.prompts import SYSTEM_PROMPT
 from harle_services.bootstrap import create_tools_injector
 from harle_utils import ToolAccessDeniedError, ToolUnavailableError
 
@@ -67,15 +69,28 @@ def resolved_user(user_id: UUID) -> ResolvedUser:
 
 def test_tool_access_matrix_and_lazy_sheets_configuration() -> None:
     juan_id = uuid4()
+    expense_repository = cast(ExpenseRepository, object())
     incomplete_settings = LegacyGoogleSheetsSettings(
         _env_file=None,
         LEGACY_GOOGLE_SHEETS_USER_ID=juan_id,
     )
-    commercial_store = create_tools_injector(incomplete_settings).inject(
+    commercial_store = create_tools_injector(
+        incomplete_settings,
+        expense_repository=expense_repository,
+    ).inject(
         resolved_user(uuid4()),
+        timezone="America/Argentina/Cordoba",
     )
 
-    assert not commercial_store.tools
+    assert {tool.name for tool in commercial_store.tools} == {
+        "add_expense",
+        "add_refund",
+        "add_installment_expense",
+        "list_expenses",
+        "summarize_expenses",
+        "update_expense",
+        "delete_expense",
+    }
     assert "Google Sheets" not in commercial_store.prompt
     assert "add_one_time_transaction" not in SYSTEM_PROMPT
     with pytest.raises(ToolUnavailableError):
@@ -88,8 +103,12 @@ def test_tool_access_matrix_and_lazy_sheets_configuration() -> None:
         EXPENSES_NEXT_YEAR_SPREADSHEET_ID="next",
         GOOGLE_SERVICE_ACCOUNT_JSON_BASE64="e30=",
     )
-    juan_store = create_tools_injector(configured_settings).inject(
+    juan_store = create_tools_injector(
+        configured_settings,
+        expense_repository=expense_repository,
+    ).inject(
         resolved_user(juan_id),
+        timezone="America/Argentina/Cordoba",
     )
 
     assert {tool.name for tool in juan_store.tools} == {

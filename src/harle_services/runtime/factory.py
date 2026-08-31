@@ -50,5 +50,8 @@ class UserRuntimeFactory:
                 user_id,
                 telegram_chat_id,
             ),
-            tool_store=self.tools.inject(resolved_user),
+            tool_store=self.tools.inject(
+                resolved_user,
+                timezone=user_profile.timezone,
+            ),
         )
