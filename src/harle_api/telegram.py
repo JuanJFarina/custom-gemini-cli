@@ -1,6 +1,5 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
 
 import httpx
 
@@ -10,13 +9,20 @@ TELEGRAM_MESSAGE_LIMIT = 4096
 
 @dataclass(frozen=True)
 class IncomingTelegramMessage:
+    update_id: int
     chat_id: int
     user_id: int
     user_name: str
     text: str
 
 
-def extract_text_message(update: Mapping[str, Any]) -> IncomingTelegramMessage | None:
+def extract_text_message(
+    update: Mapping[str, object],
+) -> IncomingTelegramMessage | None:
+    update_id = _parse_update_id(update.get("update_id"))
+    if update_id is None:
+        return None
+
     message = update.get("message")
     if not isinstance(message, Mapping):
         return None
@@ -32,10 +38,11 @@ def extract_text_message(update: Mapping[str, Any]) -> IncomingTelegramMessage |
 
     chat_id = _parse_int(chat.get("id"))
     user_id = _parse_int(from_user.get("id"))
-    if chat_id is None or user_id is None:
+    if chat_id is None or chat_id == 0 or user_id is None or user_id <= 0:
         return None
 
     return IncomingTelegramMessage(
+        update_id=update_id,
         chat_id=chat_id,
         user_id=user_id,
         user_name=_display_name(from_user, fallback=f"Telegram user {user_id}"),
@@ -86,14 +93,19 @@ def _chunk_message(text: str) -> list[str]:
     return chunks
 
 
-def _parse_int(value: Any) -> int | None:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
+def _parse_update_id(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         return None
+    return value
 
 
-def _display_name(user: Mapping[str, Any], *, fallback: str) -> str:
+def _parse_int(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _display_name(user: Mapping[str, object], *, fallback: str) -> str:
     first_name = _parse_str(user.get("first_name"))
     last_name = _parse_str(user.get("last_name"))
     username = _parse_str(user.get("username"))
@@ -106,7 +118,7 @@ def _display_name(user: Mapping[str, Any], *, fallback: str) -> str:
     return fallback
 
 
-def _parse_str(value: Any) -> str:
+def _parse_str(value: object) -> str:
     if isinstance(value, str):
         return value.strip()
     return ""

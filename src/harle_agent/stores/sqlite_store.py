@@ -6,8 +6,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
-from harle_agent.models import ConversationRecord, InternalToolCallInteraction
 from harle_agent.settings import get_agent_settings
+from harle_domain.conversations.models import ConversationRecord
+from harle_domain.tools.models import InternalToolCallInteraction
 
 TOKENS_CAP = get_agent_settings().MAX_CONVERSATION_TOKENS
 
@@ -76,8 +77,10 @@ class SQLiteConversationStore:
         self,
         *,
         interaction: InternalToolCallInteraction,
+        interaction_index: int,
         model: str,
     ) -> None:
+        del interaction_index
         await asyncio.to_thread(
             self._save_tool_call_sync,
             interaction=interaction,
@@ -224,7 +227,7 @@ def _format_conversation_for_context(record: ConversationRecord) -> str:
         {
             "conversation_date": record.created_at,
             "conversation_kind": "conversation",
-            "juan_jose_farina_prompt": record.prompt,
+            "user_prompt": record.prompt,
             "response": record.response,
         },
         ensure_ascii=False,

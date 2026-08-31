@@ -1,10 +1,11 @@
 import asyncio
 import json
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
-from harle_agent.models import InternalToolCallInteraction
 from harle_agent.settings import CONVERSATIONS_DIR, get_agent_settings
+from harle_domain.tools.models import InternalToolCallInteraction
 
 TOKENS_CAP = get_agent_settings().MAX_CONVERSATION_TOKENS
 
@@ -56,8 +57,10 @@ class FileConversationStore:
         self,
         *,
         interaction: InternalToolCallInteraction,
+        interaction_index: int,
         model: str,
     ) -> None:
+        del interaction_index
         await asyncio.to_thread(
             self._save_tool_call_sync,
             interaction=interaction,
@@ -108,11 +111,20 @@ def _format_conversation_for_context(path: Path) -> str:
     except (OSError, json.JSONDecodeError):
         return ""
 
-    if not isinstance(conversation, dict):
+    if not isinstance(conversation, Mapping):
         return ""
 
-    conversation.pop("model", None)
-    return json.dumps(conversation, ensure_ascii=False, indent=2)
+    normalized_conversation = {
+        key: value
+        for key, value in conversation.items()
+        if key not in {"model", "juan_jose_farina_prompt"}
+    }
+    if (
+        "user_prompt" not in normalized_conversation
+        and "juan_jose_farina_prompt" in conversation
+    ):
+        normalized_conversation["user_prompt"] = conversation["juan_jose_farina_prompt"]
+    return json.dumps(normalized_conversation, ensure_ascii=False, indent=2)
 
 
 def _format_conversation(prompt: str, response_text: str, model: str) -> str:
@@ -122,7 +134,7 @@ def _format_conversation(prompt: str, response_text: str, model: str) -> str:
             "conversation_date": created_at,
             "conversation_kind": "conversation",
             "model": model,
-            "juan_jose_farina_prompt": prompt,
+            "user_prompt": prompt,
             "response": response_text,
         },
         ensure_ascii=False,

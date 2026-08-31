@@ -1,9 +1,7 @@
 import re
 from asyncio import Task, create_task, gather
 from collections.abc import Awaitable, Callable
-from pathlib import Path
 from time import time
-from typing import Any
 
 from google.genai import Client
 from google.genai.types import (
@@ -14,6 +12,12 @@ from google.genai.types import (
 )
 from pydantic import BaseModel, ConfigDict, Field
 
+from harle_domain.tools.models import (
+    InternalToolCallInteraction,
+    ToolCall,
+    ToolCallResult,
+)
+from harle_domain.tools.policies import require_direct_request
 from harle_utils import log
 
 from .environment_knowledge import (
@@ -22,18 +26,16 @@ from .environment_knowledge import (
 )
 from .models import (
     HarleConfig,
+    HarlePersonalContext,
     HarleRunResult,
     HarleStores,
     HarleThought,
     HarleThoughtAdapter,
-    InternalToolCallInteraction,
-    ToolCall,
-    ToolCallResult,
 )
 from .prompts import SYSTEM_PROMPT
 from .retry_decorator import retry
-from .settings import PERSONAL_HISTORY_PATH, get_agent_settings
-from .tools import TOOLS, show_tool_results
+from .settings import get_agent_settings
+from .tools import show_tool_results
 
 SETTINGS = get_agent_settings()
 
@@ -41,19 +43,25 @@ SETTINGS = get_agent_settings()
 class Harle(BaseModel):
     config: HarleConfig = Field(default_factory=HarleConfig)
     stores: HarleStores
+    personal_context: HarlePersonalContext
     _client: Client | None = None
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
-    def model_post_init(self, _: Any, /) -> None:
+    def model_post_init(self, _: object, /) -> None:
         self._client = self._client or Client(api_key=self.config.api_key)
-        self.stores.tool_store.tools.extend(TOOLS)
 
     async def call(self, prompt: str) -> tuple[str, Task[None]]:
         start_time = time()
         log.info("Loading conversations and current weather")
         conversations_task = create_task(self.stores.conversation_store.load())
-        weather_task = create_task(get_current_weather())
+        weather_task = create_task(
+            get_current_weather(
+                latitude=self.personal_context.latitude,
+                longitude=self.personal_context.longitude,
+                timezone_name=self.personal_context.timezone,
+            ),
+        )
         conversations, current_weather = await gather(conversations_task, weather_task)
         log.info("Building system instruction")
         system_instruction = self._build_system_instruction(
@@ -103,7 +111,10 @@ class Harle(BaseModel):
             )
 
         if harle_thought.action == "call_tool":
-            results = await self._call_tools_in_batches(harle_thought.calls)
+            results = await self._call_tools_in_batches(
+                harle_thought.calls,
+                user_message=prompt,
+            )
             interaction = InternalToolCallInteraction(
                 tool_calls=harle_thought.calls,
                 tool_results=results,
@@ -171,9 +182,10 @@ class Harle(BaseModel):
         prompt: str,
         run_result: HarleRunResult,
     ) -> None:
-        for interaction in run_result.tool_interactions:
+        for interaction_index, interaction in enumerate(run_result.tool_interactions):
             await self.stores.conversation_store.save_tool_call(
                 interaction=interaction,
+                interaction_index=interaction_index,
                 model=self.config.model,
             )
 
@@ -186,6 +198,8 @@ class Harle(BaseModel):
     async def _call_tools_in_batches(
         self,
         calls: list[ToolCall],
+        *,
+        user_message: str,
     ) -> list[ToolCallResult]:
         results: list[ToolCallResult] = []
         concurrent_calls: list[ToolCall] = []
@@ -194,16 +208,29 @@ class Harle(BaseModel):
             if tool.can_run_concurrently:
                 concurrent_calls.append(call)
                 continue
-            results.append(await self._call_tool(call))
+            results.append(await self._call_tool(call, user_message))
         results.extend(
-            await _call_concurrently(concurrent_calls, self._call_tool),
+            await _call_concurrently(
+                concurrent_calls,
+                lambda call: self._call_tool(call, user_message),
+            ),
         )
         return results
 
     @retry
-    async def _call_tool(self, call: ToolCall) -> ToolCallResult:
+    async def _call_tool(
+        self,
+        call: ToolCall,
+        user_message: str,
+    ) -> ToolCallResult:
         tool = self.stores.tool_store.get(call.tool_name)
-        return await tool.func(call.tool_args)
+        require_direct_request(
+            definition=tool.definition,
+            call=call,
+            user_message=user_message,
+        )
+        arguments = tool.definition.argument_model.model_validate(call.tool_args)
+        return await tool.handler(arguments)
 
     def _extract_json_object(self, text: str) -> str:
         stripped = text.strip()
@@ -228,19 +255,25 @@ class Harle(BaseModel):
 
     def _build_system_instruction(
         self,
-        latest_conversations: str,
+        conversations: str,
         *,
         current_weather: str,
     ) -> str:
-        tools_prompt = "\n".join([tool.prompt for tool in TOOLS])
+        tools_prompt = self.stores.tool_store.prompt or "No tools are available."
         system_instruction = SYSTEM_PROMPT.format(
+            user_name=self.personal_context.user_name,
+            preferred_name=self.personal_context.preferred_name,
+            locale=self.personal_context.locale,
+            timezone=self.personal_context.timezone,
+            assistant_profile=self.personal_context.assistant_profile,
+            personal_history=self.personal_context.personal_history,
+            conversations=conversations,
             tools=tools_prompt,
-            juan_personal_history_summary=_load_personal_history(PERSONAL_HISTORY_PATH),
-            current_time_and_date=get_current_time_and_date(),
+            current_time_and_date=get_current_time_and_date(
+                self.personal_context.timezone,
+            ),
             current_weather=current_weather,
-            latest_conversations=latest_conversations,
         )
-        log.debug(f"\n---------\n{system_instruction}\n---------\n")
         log.info(f"System Instructions Token Size: {len(system_instruction) / 4:.0f}")
         return system_instruction
 
@@ -251,17 +284,6 @@ async def _call_concurrently(
 ) -> list[ToolCallResult]:
     coroutines = [call_func(call) for call in calls]
     return await gather(*coroutines)
-
-
-def _load_personal_history(path: Path) -> str:
-    if not path.is_file():
-        log.warning(f"Personal history file {path} does not exist")
-        return "No personal history has been recorded yet."
-
-    content = path.read_text(encoding="utf-8").strip()
-    if not content:
-        log.warning("Personal history file is empty")
-    return content or "No personal history has been recorded yet."
 
 
 def _tool_results(

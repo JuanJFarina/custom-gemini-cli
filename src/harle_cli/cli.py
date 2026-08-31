@@ -1,12 +1,24 @@
 import asyncio
 from argparse import ArgumentParser, Namespace
 from sys import stderr
+from uuid import UUID
 
 from harle_agent import __version__
 from harle_agent.agent import Harle
-from harle_agent.models import HarleStores, HarleToolStore
+from harle_agent.models import HarlePersonalContext, HarleStores
 from harle_agent.retry_decorator import ASSISTANT_FAILURES
 from harle_agent.stores import FileConversationStore
+from harle_domain.tools.models import HarleToolStore
+from harle_services.bootstrap import create_tools_injector
+
+CLI_PERSONAL_CONTEXT = HarlePersonalContext(
+    user_name="CLI user",
+    preferred_name="User",
+    locale="und",
+    timezone="UTC",
+    assistant_profile="Harle is a concise and transparent AI personal assistant.",
+    personal_history="No personal history has been supplied.",
+)
 
 
 async def call_harle(harle: Harle, prompt: str) -> None:
@@ -24,15 +36,19 @@ def main() -> int:
         print("Prompt cannot be empty.", file=stderr)
         return 2
 
-    harle_stores = HarleStores(
-        conversation_store=FileConversationStore(),
-        tool_store=HarleToolStore(),
-    )
-    harle = Harle(
-        stores=harle_stores,
-    )
-
     try:
+        tool_store = (
+            create_tools_injector().inject_for_explicit_user_id(args.user_id)
+            if isinstance(args.user_id, UUID)
+            else HarleToolStore()
+        )
+        harle = Harle(
+            stores=HarleStores(
+                conversation_store=FileConversationStore(),
+                tool_store=tool_store,
+            ),
+            personal_context=CLI_PERSONAL_CONTEXT,
+        )
         asyncio.run(call_harle(harle, prompt))
     except ASSISTANT_FAILURES as exc:
         print(f"Gemini request failed: {exc}", file=stderr)
@@ -55,6 +71,11 @@ def _parse_args() -> Namespace:
         "--version",
         action="version",
         version=f"%(prog)s {__version__}",
+    )
+    parser.add_argument(
+        "--user-id",
+        type=UUID,
+        help="Explicit internal user UUID used for user-scoped development tools.",
     )
     return parser.parse_args()
 
