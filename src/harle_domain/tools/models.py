@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -84,7 +85,14 @@ class ToolDefinition:
 @dataclass(frozen=True, slots=True)
 class ToolExecutionContext:
     user_id: UUID
+    timezone: str
     authorized_families: frozenset[ToolFamily]
+
+    def __post_init__(self) -> None:
+        try:
+            ZoneInfo(self.timezone)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"Unknown IANA timezone: {self.timezone}.") from exc
 
     def require_family(self, family: ToolFamily) -> None:
         if family not in self.authorized_families:

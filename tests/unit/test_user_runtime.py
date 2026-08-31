@@ -16,15 +16,32 @@ from harle_domain.accounts import (
     User,
 )
 from harle_domain.profiles import AssistantProfile, UserProfile
-from harle_domain.tools.models import InternalToolCallInteraction
+from harle_domain.tools.models import (
+    InternalToolCallInteraction,
+    ToolFamily,
+)
 from harle_services.access import IdentityService, SubscriptionService
 from harle_services.runtime import UserRuntimeFactory
-from harle_services.tools import ToolAccessPolicy, ToolRegistry, ToolsInjector
+from harle_services.tools import (
+    ToolAccessPolicy,
+    ToolFamilyRegistration,
+    ToolRegistry,
+    ToolsInjector,
+)
 from harle_utils import UnknownIdentityError
 
 NOW = datetime(2026, 8, 31, tzinfo=timezone.utc)
 EMPTY_TOOLS = ToolsInjector(
-    registry=ToolRegistry(registrations=()),
+    registry=ToolRegistry(
+        registrations=(
+            ToolFamilyRegistration(
+                family=ToolFamily.INTERNAL_EXPENSES,
+                instructions="No tools are configured.",
+                definitions=(),
+                handler_factory=lambda _: {},
+            ),
+        ),
+    ),
     access_policy=ToolAccessPolicy(legacy_google_sheets_user_id=None),
 )
 

@@ -52,6 +52,7 @@ class ToolRegistry:
         self,
         *,
         user_id: UUID,
+        timezone: str,
         authorized_families: frozenset[ToolFamily],
     ) -> HarleToolStore:
         unavailable = authorized_families - self.families
@@ -60,6 +61,7 @@ class ToolRegistry:
 
         context = ToolExecutionContext(
             user_id=user_id,
+            timezone=timezone,
             authorized_families=authorized_families,
         )
         tools: list[HarleTool] = []
