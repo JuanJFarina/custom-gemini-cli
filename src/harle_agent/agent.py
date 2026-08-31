@@ -17,6 +17,7 @@ from harle_domain.tools.models import (
     ToolCall,
     ToolCallResult,
 )
+from harle_domain.tools.policies import require_direct_request
 from harle_utils import log
 
 from .environment_knowledge import (
@@ -34,7 +35,7 @@ from .models import (
 from .prompts import SYSTEM_PROMPT
 from .retry_decorator import retry
 from .settings import get_agent_settings
-from .tools import TOOLS, show_tool_results
+from .tools import show_tool_results
 
 SETTINGS = get_agent_settings()
 
@@ -49,10 +50,6 @@ class Harle(BaseModel):
 
     def model_post_init(self, _: object, /) -> None:
         self._client = self._client or Client(api_key=self.config.api_key)
-        registered_tool_names = {tool.name for tool in self.stores.tool_store.tools}
-        self.stores.tool_store.tools.extend(
-            tool for tool in TOOLS if tool.name not in registered_tool_names
-        )
 
     async def call(self, prompt: str) -> tuple[str, Task[None]]:
         start_time = time()
@@ -114,7 +111,10 @@ class Harle(BaseModel):
             )
 
         if harle_thought.action == "call_tool":
-            results = await self._call_tools_in_batches(harle_thought.calls)
+            results = await self._call_tools_in_batches(
+                harle_thought.calls,
+                user_message=prompt,
+            )
             interaction = InternalToolCallInteraction(
                 tool_calls=harle_thought.calls,
                 tool_results=results,
@@ -197,6 +197,8 @@ class Harle(BaseModel):
     async def _call_tools_in_batches(
         self,
         calls: list[ToolCall],
+        *,
+        user_message: str,
     ) -> list[ToolCallResult]:
         results: list[ToolCallResult] = []
         concurrent_calls: list[ToolCall] = []
@@ -205,16 +207,29 @@ class Harle(BaseModel):
             if tool.can_run_concurrently:
                 concurrent_calls.append(call)
                 continue
-            results.append(await self._call_tool(call))
+            results.append(await self._call_tool(call, user_message))
         results.extend(
-            await _call_concurrently(concurrent_calls, self._call_tool),
+            await _call_concurrently(
+                concurrent_calls,
+                lambda call: self._call_tool(call, user_message),
+            ),
         )
         return results
 
     @retry
-    async def _call_tool(self, call: ToolCall) -> ToolCallResult:
+    async def _call_tool(
+        self,
+        call: ToolCall,
+        user_message: str,
+    ) -> ToolCallResult:
         tool = self.stores.tool_store.get(call.tool_name)
-        return await tool.func(call.tool_args)
+        require_direct_request(
+            definition=tool.definition,
+            call=call,
+            user_message=user_message,
+        )
+        arguments = tool.definition.argument_model.model_validate(call.tool_args)
+        return await tool.handler(arguments)
 
     def _extract_json_object(self, text: str) -> str:
         stripped = text.strip()
@@ -243,7 +258,7 @@ class Harle(BaseModel):
         *,
         current_weather: str,
     ) -> str:
-        tools_prompt = "\n".join(tool.prompt for tool in self.stores.tool_store.tools)
+        tools_prompt = self.stores.tool_store.prompt or "No tools are available."
         system_instruction = SYSTEM_PROMPT.format(
             user_name=self.personal_context.user_name,
             preferred_name=self.personal_context.preferred_name,
