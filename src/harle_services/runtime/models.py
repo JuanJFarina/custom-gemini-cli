@@ -12,5 +12,6 @@ class UserRuntime:
     user_profile: UserProfile
     assistant_profile: AssistantProfile
     telegram_chat_id: int
+    telegram_update_id: int
     conversation_store: ConversationStore
     tool_store: HarleToolStore

@@ -17,6 +17,9 @@ from harle_infrastructure.postgres.repositories.profiles import (
     PostgresAssistantProfileRepository,
     PostgresUserProfileRepository,
 )
+from harle_infrastructure.postgres.repositories.telegram_updates import (
+    PostgresTelegramUpdateClaimRepository,
+)
 from harle_infrastructure.postgres.schema import validate_postgres_schema
 
 __all__ = [
@@ -27,6 +30,7 @@ __all__ = [
     "PostgresConversationStore",
     "PostgresEventRepository",
     "PostgresExpenseRepository",
+    "PostgresTelegramUpdateClaimRepository",
     "PostgresUserProfileRepository",
     "create_postgres_pool",
     "validate_postgres_schema",

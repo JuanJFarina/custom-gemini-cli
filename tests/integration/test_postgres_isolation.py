@@ -17,18 +17,24 @@ from harle_infrastructure.postgres import (
 )
 
 DATABASE_URL = os.environ.get("TEST_POSTGRES_DATABASE_URL")
-SCHEMA_PATH = Path(__file__).parents[2] / "scripts" / "apply_multi_user_runtime.sql"
+ROOT = Path(__file__).parents[2]
+SCHEMA_PATHS = (
+    ROOT / "scripts" / "apply_multi_user_runtime.sql",
+    ROOT / "scripts" / "apply_internal_expenses.sql",
+    ROOT / "scripts" / "apply_internal_events.sql",
+    ROOT / "scripts" / "apply_telegram_dedup_ordering.sql",
+)
 
 
 async def verify_isolation(database_url: str) -> None:
-    schema = SCHEMA_PATH.read_text(encoding="utf-8")
     first_id = uuid4()
     second_id = uuid4()
     first_telegram_id = first_id.int % 8_000_000_000 + 1
     second_telegram_id = second_id.int % 8_000_000_000 + 1
     connection = await asyncpg.connect(database_url)
     try:
-        await connection.execute(schema)
+        for schema_path in SCHEMA_PATHS:
+            await connection.execute(schema_path.read_text(encoding="utf-8"))
         for user_id, telegram_id, name in (
             (first_id, first_telegram_id, "First"),
             (second_id, second_telegram_id, "Second"),

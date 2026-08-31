@@ -13,5 +13,6 @@ class ConversationStore(Protocol):
         self,
         *,
         interaction: InternalToolCallInteraction,
+        interaction_index: int,
         model: str,
     ) -> None: ...
