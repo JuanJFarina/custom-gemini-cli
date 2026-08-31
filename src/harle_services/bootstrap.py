@@ -17,6 +17,7 @@ from harle_infrastructure.postgres import (
     PostgresConversationStore,
     PostgresEventRepository,
     PostgresExpenseRepository,
+    PostgresTelegramUpdateClaimRepository,
     PostgresUserProfileRepository,
     create_postgres_pool,
     validate_postgres_schema,
@@ -24,6 +25,10 @@ from harle_infrastructure.postgres import (
 from harle_services.access import IdentityService, SubscriptionService
 from harle_services.events import EventService
 from harle_services.expenses import ExpenseService
+from harle_services.messaging import (
+    TelegramUpdateDeduplicator,
+    UserWorkCoordinator,
+)
 from harle_services.runtime import UserRuntimeFactory
 from harle_services.tools import (
     ToolAccessPolicy,
@@ -41,6 +46,8 @@ class ProcessRuntime:
     pool: asyncpg.Pool
     users: UserRuntimeFactory
     tools: ToolsInjector
+    telegram_updates: TelegramUpdateDeduplicator
+    user_work: UserWorkCoordinator
 
 
 def create_tools_injector(
@@ -103,11 +110,16 @@ async def create_process_runtime(
         event_repository=PostgresEventRepository(pool),
     )
 
-    def conversation_store(user_id: UUID, chat_id: int) -> ConversationStore:
+    def conversation_store(
+        user_id: UUID,
+        chat_id: int,
+        update_id: int,
+    ) -> ConversationStore:
         return PostgresConversationStore(
             repository=conversations,
             user_id=user_id,
             telegram_chat_id=chat_id,
+            telegram_update_id=update_id,
         )
 
     return ProcessRuntime(
@@ -121,6 +133,10 @@ async def create_process_runtime(
             tools=tools,
         ),
         tools=tools,
+        telegram_updates=TelegramUpdateDeduplicator(
+            PostgresTelegramUpdateClaimRepository(pool),
+        ),
+        user_work=UserWorkCoordinator(),
     )
 
 

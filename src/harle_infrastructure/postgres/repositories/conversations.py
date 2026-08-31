@@ -21,6 +21,13 @@ class _ConversationWrite:
 
 
 @dataclass(frozen=True, slots=True)
+class _ToolCallWrite:
+    interaction: InternalToolCallInteraction
+    interaction_index: int
+    model: str
+
+
+@dataclass(frozen=True, slots=True)
 class PostgresConversationRepository:
     pool: asyncpg.Pool
 
@@ -56,6 +63,7 @@ class PostgresConversationRepository:
         *,
         user_id: UUID,
         telegram_chat_id: int,
+        telegram_update_id: int | None,
         conversation: _ConversationWrite,
     ) -> None:
         async with self.pool.acquire() as connection:
@@ -63,15 +71,17 @@ class PostgresConversationRepository:
                 """
                 INSERT INTO conversations (
                     user_id, telegram_chat_id, prompt, response,
-                    model, kind
+                    model, kind, telegram_update_id
                 )
-                VALUES ($1, $2, $3, $4, $5, 'conversation')
+                VALUES ($1, $2, $3, $4, $5, 'conversation', $6)
+                ON CONFLICT DO NOTHING
                 """,
                 user_id,
                 telegram_chat_id,
                 conversation.prompt,
                 conversation.response_text,
                 conversation.model,
+                telegram_update_id,
             )
 
     async def save_tool_call(
@@ -79,27 +89,40 @@ class PostgresConversationRepository:
         *,
         user_id: UUID,
         telegram_chat_id: int,
-        interaction: InternalToolCallInteraction,
-        model: str,
+        telegram_update_id: int | None,
+        tool_call: _ToolCallWrite,
     ) -> None:
+        if (
+            isinstance(tool_call.interaction_index, bool)
+            or tool_call.interaction_index < 0
+        ):
+            raise ValueError("Tool interaction index must be non-negative.")
         async with self.pool.acquire() as connection:
             await connection.execute(
                 """
                 INSERT INTO conversations (
                     user_id, telegram_chat_id, prompt, response, model,
-                    kind, tool_call_response, tool_result
+                    kind, tool_call_response, tool_result,
+                    telegram_update_id, tool_interaction_index
                 )
                 VALUES (
-                    $1, $2, '', '', $3, 'tool_call', $4::jsonb, $5::jsonb
+                    $1, $2, '', '', $3, 'tool_call', $4::jsonb, $5::jsonb,
+                    $6, $7
                 )
+                ON CONFLICT DO NOTHING
                 """,
                 user_id,
                 telegram_chat_id,
-                model,
-                json.dumps(interaction.tool_call_response.model_dump()),
+                tool_call.model,
+                json.dumps(tool_call.interaction.tool_call_response.model_dump()),
                 json.dumps(
-                    [result.model_dump() for result in interaction.tool_results],
+                    [
+                        result.model_dump()
+                        for result in tool_call.interaction.tool_results
+                    ],
                 ),
+                telegram_update_id,
+                tool_call.interaction_index,
             )
 
 
@@ -108,11 +131,18 @@ class PostgresConversationStore:
     repository: PostgresConversationRepository
     user_id: UUID
     telegram_chat_id: int
+    telegram_update_id: int | None = None
     max_tokens: int = DEFAULT_CONVERSATION_TOKENS
 
     def __post_init__(self) -> None:
         if self.max_tokens <= 0:
             raise ValueError("Conversation token limit must be positive.")
+        if (
+            isinstance(self.telegram_update_id, bool)
+            or self.telegram_update_id is not None
+            and self.telegram_update_id < 0
+        ):
+            raise ValueError("Telegram update identifier must be non-negative.")
 
     async def load(self) -> str:
         return await self.repository.load(
@@ -131,6 +161,7 @@ class PostgresConversationStore:
         await self.repository.save(
             user_id=self.user_id,
             telegram_chat_id=self.telegram_chat_id,
+            telegram_update_id=self.telegram_update_id,
             conversation=_ConversationWrite(
                 prompt=prompt,
                 response_text=response_text,
@@ -142,13 +173,18 @@ class PostgresConversationStore:
         self,
         *,
         interaction: InternalToolCallInteraction,
+        interaction_index: int,
         model: str,
     ) -> None:
         await self.repository.save_tool_call(
             user_id=self.user_id,
             telegram_chat_id=self.telegram_chat_id,
-            interaction=interaction,
-            model=model,
+            telegram_update_id=self.telegram_update_id,
+            tool_call=_ToolCallWrite(
+                interaction=interaction,
+                interaction_index=interaction_index,
+                model=model,
+            ),
         )
 
 

@@ -99,9 +99,10 @@ class FakeAssistantProfiles:
 
 
 class FakeConversationStore:
-    def __init__(self, user_id: UUID, chat_id: int) -> None:
+    def __init__(self, user_id: UUID, chat_id: int, update_id: int) -> None:
         self.user_id = user_id
         self.chat_id = chat_id
+        self.update_id = update_id
 
     async def load(self) -> str:
         return "No conversations yet"
@@ -113,6 +114,7 @@ class FakeConversationStore:
         self,
         *,
         interaction: InternalToolCallInteraction,
+        interaction_index: int,
         model: str,
     ) -> None:
         return None
@@ -186,10 +188,18 @@ def test_runtime_is_immutable_and_isolates_two_users() -> None:
     )
 
     first_runtime = asyncio.run(
-        factory.create(telegram_user_id=101, telegram_chat_id=1001),
+        factory.create(
+            telegram_user_id=101,
+            telegram_chat_id=1001,
+            telegram_update_id=10001,
+        ),
     )
     second_runtime = asyncio.run(
-        factory.create(telegram_user_id=202, telegram_chat_id=2002),
+        factory.create(
+            telegram_user_id=202,
+            telegram_chat_id=2002,
+            telegram_update_id=20002,
+        ),
     )
 
     assert first_runtime.user_profile.personal_history == "First history"
@@ -198,6 +208,8 @@ def test_runtime_is_immutable_and_isolates_two_users() -> None:
     assert isinstance(second_runtime.conversation_store, FakeConversationStore)
     assert first_runtime.conversation_store.user_id == first.user.id
     assert second_runtime.conversation_store.user_id == second.user.id
+    assert first_runtime.telegram_update_id == 10001
+    assert second_runtime.telegram_update_id == 20002
     attribute = "telegram_chat_id"
     with pytest.raises(FrozenInstanceError):
         setattr(first_runtime, attribute, 9)
@@ -215,6 +227,12 @@ def test_unknown_identity_stops_before_profile_loading() -> None:
     )
 
     with pytest.raises(UnknownIdentityError):
-        asyncio.run(factory.create(telegram_user_id=404, telegram_chat_id=1))
+        asyncio.run(
+            factory.create(
+                telegram_user_id=404,
+                telegram_chat_id=1,
+                telegram_update_id=404,
+            ),
+        )
 
     assert profiles.calls == 0

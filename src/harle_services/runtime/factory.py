@@ -14,7 +14,7 @@ from harle_utils import MissingProfileError
 
 from .models import UserRuntime
 
-ConversationStoreBuilder = Callable[[UUID, int], ConversationStore]
+ConversationStoreBuilder = Callable[[UUID, int, int], ConversationStore]
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +31,7 @@ class UserRuntimeFactory:
         *,
         telegram_user_id: int,
         telegram_chat_id: int,
+        telegram_update_id: int,
     ) -> UserRuntime:
         resolved_user = await self.identity.resolve_telegram_user(telegram_user_id)
         self.subscriptions.require_active(resolved_user)
@@ -46,9 +47,11 @@ class UserRuntimeFactory:
             user_profile=user_profile,
             assistant_profile=assistant_profile,
             telegram_chat_id=telegram_chat_id,
+            telegram_update_id=telegram_update_id,
             conversation_store=self.conversation_store_builder(
                 user_id,
                 telegram_chat_id,
+                telegram_update_id,
             ),
             tool_store=self.tools.inject(
                 resolved_user,

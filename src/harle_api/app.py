@@ -1,6 +1,6 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -39,7 +39,7 @@ async def get_healthcheck() -> JSONResponse:
 
 @harle_app.post("/telegram/webhook")
 async def post_telegram_webhook(
-    update: dict[str, Any],
+    update: Mapping[str, object],
     background_tasks: BackgroundTasks,
     request: Request,
     x_telegram_bot_api_secret_token: Annotated[
@@ -56,15 +56,27 @@ async def post_telegram_webhook(
         return JSONResponse(content={"ok": True, "accepted": False})
 
     runtime = _runtime(request)
+    claimed = await runtime.telegram_updates.claim(
+        update_id=message.update_id,
+        telegram_user_id=message.user_id,
+        telegram_chat_id=message.chat_id,
+    )
+    if not claimed:
+        return JSONResponse(
+            content={"ok": True, "accepted": False, "duplicate": True},
+        )
+
     user_runtime = await runtime.users.create(
         telegram_user_id=message.user_id,
         telegram_chat_id=message.chat_id,
+        telegram_update_id=message.update_id,
     )
 
     background_tasks.add_task(
         process_telegram_message,
         message=message,
         user_runtime=user_runtime,
+        user_work=runtime.user_work,
     )
     return JSONResponse(content={"ok": True, "accepted": True})
 

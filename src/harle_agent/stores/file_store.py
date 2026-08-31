@@ -57,8 +57,10 @@ class FileConversationStore:
         self,
         *,
         interaction: InternalToolCallInteraction,
+        interaction_index: int,
         model: str,
     ) -> None:
+        del interaction_index
         await asyncio.to_thread(
             self._save_tool_call_sync,
             interaction=interaction,

@@ -11,13 +11,29 @@ from harle_api.telegram import (
     send_message,
     send_typing_action,
 )
+from harle_services.messaging import UserWorkCoordinator
 from harle_services.runtime import UserRuntime
 
 
 async def process_telegram_message(
     message: IncomingTelegramMessage,
     user_runtime: UserRuntime,
+    user_work: UserWorkCoordinator,
     settings: ApiSettings | None = None,
+) -> None:
+    async with user_work.serialize(user_runtime.resolved_user.user.id):
+        await _process_telegram_message(
+            message=message,
+            user_runtime=user_runtime,
+            settings=settings,
+        )
+
+
+async def _process_telegram_message(
+    *,
+    message: IncomingTelegramMessage,
+    user_runtime: UserRuntime,
+    settings: ApiSettings | None,
 ) -> None:
     settings = settings or get_settings()
 

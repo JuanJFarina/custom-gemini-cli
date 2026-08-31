@@ -182,9 +182,10 @@ class Harle(BaseModel):
         prompt: str,
         run_result: HarleRunResult,
     ) -> None:
-        for interaction in run_result.tool_interactions:
+        for interaction_index, interaction in enumerate(run_result.tool_interactions):
             await self.stores.conversation_store.save_tool_call(
                 interaction=interaction,
+                interaction_index=interaction_index,
                 model=self.config.model,
             )
 
