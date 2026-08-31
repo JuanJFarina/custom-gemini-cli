@@ -49,7 +49,7 @@ def split_installment_amount(
 ) -> Sequence[Decimal]:
     if not total.is_finite() or total <= 0 or total.quantize(CENT) != total:
         raise ValueError(
-            "Installment total must be positive with at most two decimals."
+            "Installment total must be positive with at most two decimals.",
         )
     if not 2 <= installment_count <= 12:
         raise ValueError("Installment count must be between 2 and 12.")

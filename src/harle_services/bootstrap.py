@@ -4,6 +4,7 @@ from uuid import UUID
 import asyncpg
 
 from harle_domain.conversations.ports import ConversationStore
+from harle_domain.events import EventRepository
 from harle_domain.expenses import ExpenseRepository
 from harle_infrastructure.google_sheets import (
     GoogleSheetsClientFactory,
@@ -14,12 +15,14 @@ from harle_infrastructure.postgres import (
     PostgresAssistantProfileRepository,
     PostgresConversationRepository,
     PostgresConversationStore,
+    PostgresEventRepository,
     PostgresExpenseRepository,
     PostgresUserProfileRepository,
     create_postgres_pool,
     validate_postgres_schema,
 )
 from harle_services.access import IdentityService, SubscriptionService
+from harle_services.events import EventService
 from harle_services.expenses import ExpenseService
 from harle_services.runtime import UserRuntimeFactory
 from harle_services.tools import (
@@ -27,6 +30,7 @@ from harle_services.tools import (
     ToolFamilyRegistration,
     ToolRegistry,
     ToolsInjector,
+    create_internal_events_registration,
     create_internal_expenses_registration,
     create_legacy_google_sheets_registration,
 )
@@ -43,6 +47,7 @@ def create_tools_injector(
     settings: LegacyGoogleSheetsSettings | None = None,
     *,
     expense_repository: ExpenseRepository | None = None,
+    event_repository: EventRepository | None = None,
 ) -> ToolsInjector:
     legacy_settings = settings or LegacyGoogleSheetsSettings()
     registrations: list[ToolFamilyRegistration] = [
@@ -54,6 +59,12 @@ def create_tools_injector(
         registrations.append(
             create_internal_expenses_registration(
                 ExpenseService(expense_repository),
+            ),
+        )
+    if event_repository is not None:
+        registrations.append(
+            create_internal_events_registration(
+                EventService(event_repository),
             ),
         )
     registry = ToolRegistry(
@@ -89,6 +100,7 @@ async def create_process_runtime(
     tools = create_tools_injector(
         legacy_google_sheets_settings,
         expense_repository=PostgresExpenseRepository(pool),
+        event_repository=PostgresEventRepository(pool),
     )
 
     def conversation_store(user_id: UUID, chat_id: int) -> ConversationStore:
