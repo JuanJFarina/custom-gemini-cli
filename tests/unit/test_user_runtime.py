@@ -19,9 +19,14 @@ from harle_domain.profiles import AssistantProfile, UserProfile
 from harle_domain.tools.models import InternalToolCallInteraction
 from harle_services.access import IdentityService, SubscriptionService
 from harle_services.runtime import UserRuntimeFactory
+from harle_services.tools import ToolAccessPolicy, ToolRegistry, ToolsInjector
 from harle_utils import UnknownIdentityError
 
 NOW = datetime(2026, 8, 31, tzinfo=timezone.utc)
+EMPTY_TOOLS = ToolsInjector(
+    registry=ToolRegistry(registrations=()),
+    access_policy=ToolAccessPolicy(legacy_google_sheets_user_id=None),
+)
 
 
 class FakeAccounts(AccountRepository):
@@ -154,6 +159,7 @@ def test_runtime_is_immutable_and_isolates_two_users() -> None:
         user_profiles=FakeUserProfiles(user_profiles),
         assistant_profiles=FakeAssistantProfiles(assistant_profiles),
         conversation_store_builder=FakeConversationStore,
+        tools=EMPTY_TOOLS,
     )
 
     first_runtime = asyncio.run(
@@ -182,6 +188,7 @@ def test_unknown_identity_stops_before_profile_loading() -> None:
         user_profiles=profiles,
         assistant_profiles=FakeAssistantProfiles({}),
         conversation_store_builder=FakeConversationStore,
+        tools=EMPTY_TOOLS,
     )
 
     with pytest.raises(UnknownIdentityError):

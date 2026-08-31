@@ -9,6 +9,7 @@ from harle_domain.profiles import (
     UserProfileRepository,
 )
 from harle_services.access import IdentityService, SubscriptionService
+from harle_services.tools import ToolsInjector
 from harle_utils import MissingProfileError
 
 from .models import UserRuntime
@@ -23,6 +24,7 @@ class UserRuntimeFactory:
     user_profiles: UserProfileRepository
     assistant_profiles: AssistantProfileRepository
     conversation_store_builder: ConversationStoreBuilder
+    tools: ToolsInjector
 
     async def create(
         self,
@@ -48,4 +50,5 @@ class UserRuntimeFactory:
                 user_id,
                 telegram_chat_id,
             ),
+            tool_store=self.tools.inject(resolved_user),
         )

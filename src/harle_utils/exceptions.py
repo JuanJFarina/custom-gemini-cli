@@ -14,5 +14,13 @@ class MissingProfileError(AccessDeniedError):
     pass
 
 
+class ToolAccessDeniedError(AccessDeniedError):
+    pass
+
+
+class ToolUnavailableError(ValueError):
+    pass
+
+
 class InvalidDatabaseSchemaError(RuntimeError):
     pass

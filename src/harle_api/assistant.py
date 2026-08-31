@@ -11,7 +11,6 @@ from harle_api.telegram import (
     send_message,
     send_typing_action,
 )
-from harle_domain.tools.models import HarleToolStore
 from harle_services.runtime import UserRuntime
 
 
@@ -55,7 +54,7 @@ async def _generate_response(
 ) -> tuple[str, Task[None]]:
     harle_stores = HarleStores(
         conversation_store=user_runtime.conversation_store,
-        tool_store=HarleToolStore(),
+        tool_store=user_runtime.tool_store,
     )
     user_profile = user_runtime.user_profile
     assistant_profile = user_runtime.assistant_profile

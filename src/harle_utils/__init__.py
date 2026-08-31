@@ -4,6 +4,8 @@ from .exceptions import (
     InactiveSubscriptionError,
     InvalidDatabaseSchemaError,
     MissingProfileError,
+    ToolAccessDeniedError,
+    ToolUnavailableError,
     UnknownIdentityError,
 )
 from .logging import log
@@ -14,6 +16,8 @@ __all__ = [
     "InvalidDatabaseSchemaError",
     "MissingProfileError",
     "Settings",
+    "ToolAccessDeniedError",
+    "ToolUnavailableError",
     "UnknownIdentityError",
     "log",
 ]
