@@ -225,7 +225,7 @@ def _format_conversation_for_context(record: ConversationRecord) -> str:
         {
             "conversation_date": record.created_at,
             "conversation_kind": "conversation",
-            "juan_jose_farina_prompt": record.prompt,
+            "user_prompt": record.prompt,
             "response": record.response,
         },
         ensure_ascii=False,

@@ -1,5 +1,6 @@
 from .harle_models import (
     HarleConfig,
+    HarlePersonalContext,
     HarleResponse,
     HarleRunResult,
     HarleStores,
@@ -9,6 +10,7 @@ from .harle_models import (
 
 __all__ = [
     "HarleConfig",
+    "HarlePersonalContext",
     "HarleRunResult",
     "HarleStores",
     "HarleThought",

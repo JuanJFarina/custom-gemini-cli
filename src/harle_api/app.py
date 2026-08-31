@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from harle_agent import __version__
 from harle_api.assistant import process_telegram_message
+from harle_api.exception_handlers import register_exception_handlers
 from harle_api.runtime import ApiRuntime, close_runtime, create_runtime
 from harle_api.settings import get_settings
 from harle_api.telegram import extract_text_message
@@ -28,6 +29,7 @@ harle_app = FastAPI(
     version=__version__,
     lifespan=lifespan,
 )
+register_exception_handlers(harle_app)
 
 
 @harle_app.get("/healthcheck")
@@ -53,13 +55,16 @@ async def post_telegram_webhook(
     if message is None:
         return JSONResponse(content={"ok": True, "accepted": False})
 
-    if message.user_id != settings.TELEGRAM_ALLOWED_USER_ID:
-        return JSONResponse(content={"ok": True, "accepted": False})
+    runtime = _runtime(request)
+    user_runtime = await runtime.users.create(
+        telegram_user_id=message.user_id,
+        telegram_chat_id=message.chat_id,
+    )
 
     background_tasks.add_task(
         process_telegram_message,
         message=message,
-        runtime=_runtime(request),
+        user_runtime=user_runtime,
     )
     return JSONResponse(content={"ok": True, "accepted": True})
 
