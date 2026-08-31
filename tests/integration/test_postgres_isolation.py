@@ -1,5 +1,6 @@
 import asyncio
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -15,6 +16,7 @@ from harle_infrastructure.postgres import (
     create_postgres_pool,
     validate_postgres_schema,
 )
+from harle_services.access import utc_month_period
 
 DATABASE_URL = os.environ.get("TEST_POSTGRES_DATABASE_URL")
 ROOT = Path(__file__).parents[2]
@@ -23,6 +25,7 @@ SCHEMA_PATHS = (
     ROOT / "scripts" / "apply_internal_expenses.sql",
     ROOT / "scripts" / "apply_internal_events.sql",
     ROOT / "scripts" / "apply_telegram_dedup_ordering.sql",
+    ROOT / "scripts" / "apply_bans_quotas.sql",
 )
 
 
@@ -125,6 +128,32 @@ async def verify_isolation(database_url: str) -> None:
         assert (
             "second prompt" in second_context and "first prompt" not in second_context
         )
+        async with pool.acquire() as connection:
+            await connection.execute(
+                """
+                INSERT INTO conversations (
+                    user_id, telegram_chat_id, prompt, response, model,
+                    kind, status, completed_at
+                )
+                VALUES
+                    ($1, 10, '', '', 'fake', 'tool_call', 'completed', NOW()),
+                    ($1, 10, 'failed', '', 'fake', 'conversation', 'failed', NULL)
+                """,
+                first_id,
+            )
+        period = utc_month_period(datetime.now(timezone.utc))
+        first_usage = await conversations.count_completed_conversations(
+            user_id=first_id,
+            created_from=period.starts_at,
+            created_before=period.resets_at,
+        )
+        second_usage = await conversations.count_completed_conversations(
+            user_id=second_id,
+            created_from=period.starts_at,
+            created_before=period.resets_at,
+        )
+        assert first_usage == 1
+        assert second_usage == 1
     finally:
         await pool.close()
         cleanup = await asyncpg.connect(database_url)

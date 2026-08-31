@@ -47,7 +47,9 @@ class PostgresConversationRepository:
                 SELECT prompt, response, created_at, kind,
                     tool_call_response, tool_result
                 FROM conversations
-                WHERE user_id = $1 AND telegram_chat_id = $2
+                WHERE user_id = $1
+                    AND telegram_chat_id = $2
+                    AND status = 'completed'
                 ORDER BY created_at DESC, id DESC
                 LIMIT $3
                 """,
@@ -57,6 +59,35 @@ class PostgresConversationRepository:
             )
 
         return _bounded_context(rows=rows, max_tokens=max_tokens)
+
+    async def count_completed_conversations(
+        self,
+        *,
+        user_id: UUID,
+        created_from: datetime,
+        created_before: datetime,
+    ) -> int:
+        _validate_utc_period(created_from, created_before)
+        async with self.pool.acquire() as connection:
+            count = await connection.fetchval(
+                """
+                SELECT COUNT(*)
+                FROM conversations
+                WHERE user_id = $1
+                    AND kind = 'conversation'
+                    AND status = 'completed'
+                    AND created_at >= $2
+                    AND created_at < $3
+                """,
+                user_id,
+                created_from,
+                created_before,
+            )
+        if isinstance(count, bool) or not isinstance(count, int):
+            raise TypeError(
+                "Expected the completed conversation count to be an integer.",
+            )
+        return count
 
     async def save(
         self,
@@ -71,9 +102,11 @@ class PostgresConversationRepository:
                 """
                 INSERT INTO conversations (
                     user_id, telegram_chat_id, prompt, response,
-                    model, kind, telegram_update_id
+                    model, kind, telegram_update_id, status, completed_at
                 )
-                VALUES ($1, $2, $3, $4, $5, 'conversation', $6)
+                VALUES (
+                    $1, $2, $3, $4, $5, 'conversation', $6, 'completed', NOW()
+                )
                 ON CONFLICT DO NOTHING
                 """,
                 user_id,
@@ -103,11 +136,12 @@ class PostgresConversationRepository:
                 INSERT INTO conversations (
                     user_id, telegram_chat_id, prompt, response, model,
                     kind, tool_call_response, tool_result,
-                    telegram_update_id, tool_interaction_index
+                    telegram_update_id, tool_interaction_index,
+                    status, completed_at
                 )
                 VALUES (
                     $1, $2, '', '', $3, 'tool_call', $4::jsonb, $5::jsonb,
-                    $6, $7
+                    $6, $7, 'completed', NOW()
                 )
                 ON CONFLICT DO NOTHING
                 """,
@@ -273,3 +307,16 @@ def _text(row: asyncpg.Record, key: str) -> str:
     if not isinstance(value, str):
         raise TypeError(f"Expected {key} to be text.")
     return value
+
+
+def _validate_utc_period(created_from: datetime, created_before: datetime) -> None:
+    start_offset = created_from.utcoffset()
+    end_offset = created_before.utcoffset()
+    if start_offset is None or end_offset is None:
+        raise ValueError("Conversation usage boundaries must include a timezone.")
+    if start_offset.total_seconds() != 0:
+        raise ValueError("Conversation usage start must use UTC.")
+    if end_offset.total_seconds() != 0:
+        raise ValueError("Conversation usage end must use UTC.")
+    if created_before <= created_from:
+        raise ValueError("Conversation usage end must follow its start.")

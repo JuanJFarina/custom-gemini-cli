@@ -3,6 +3,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import UUID
 
+from harle_domain.accounts import ResolvedUser
 from harle_domain.conversations.ports import ConversationStore
 from harle_domain.profiles import (
     AssistantProfileRepository,
@@ -34,6 +35,19 @@ class UserRuntimeFactory:
         telegram_update_id: int,
     ) -> UserRuntime:
         resolved_user = await self.identity.resolve_telegram_user(telegram_user_id)
+        return await self.create_for_resolved_user(
+            resolved_user=resolved_user,
+            telegram_chat_id=telegram_chat_id,
+            telegram_update_id=telegram_update_id,
+        )
+
+    async def create_for_resolved_user(
+        self,
+        *,
+        resolved_user: ResolvedUser,
+        telegram_chat_id: int,
+        telegram_update_id: int,
+    ) -> UserRuntime:
         self.subscriptions.require_active(resolved_user)
         user_id = resolved_user.user.id
         user_profile, assistant_profile = await gather(

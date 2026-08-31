@@ -22,14 +22,20 @@ from harle_infrastructure.postgres import (
     create_postgres_pool,
     validate_postgres_schema,
 )
-from harle_services.access import IdentityService, SubscriptionService
+from harle_services.access import (
+    IdentityService,
+    PreflightService,
+    RateLimitService,
+    SubscriptionService,
+    UsageQuotaService,
+)
 from harle_services.events import EventService
 from harle_services.expenses import ExpenseService
 from harle_services.messaging import (
     TelegramUpdateDeduplicator,
     UserWorkCoordinator,
 )
-from harle_services.runtime import UserRuntimeFactory
+from harle_services.runtime import RequestAdmissionService, UserRuntimeFactory
 from harle_services.tools import (
     ToolAccessPolicy,
     ToolFamilyRegistration,
@@ -44,10 +50,12 @@ from harle_services.tools import (
 @dataclass(frozen=True, slots=True)
 class ProcessRuntime:
     pool: asyncpg.Pool
+    admissions: RequestAdmissionService
     users: UserRuntimeFactory
     tools: ToolsInjector
     telegram_updates: TelegramUpdateDeduplicator
     user_work: UserWorkCoordinator
+    usage_quota: UsageQuotaService
 
 
 def create_tools_injector(
@@ -103,6 +111,7 @@ async def create_process_runtime(
         await pool.close()
         raise
 
+    accounts = PostgresAccountRepository(pool)
     conversations = PostgresConversationRepository(pool)
     tools = create_tools_injector(
         legacy_google_sheets_settings,
@@ -122,21 +131,37 @@ async def create_process_runtime(
             telegram_update_id=update_id,
         )
 
+    identity = IdentityService(accounts)
+    subscriptions = SubscriptionService()
+    usage_quota = UsageQuotaService(conversations)
+    users = UserRuntimeFactory(
+        identity=identity,
+        subscriptions=subscriptions,
+        user_profiles=PostgresUserProfileRepository(pool),
+        assistant_profiles=PostgresAssistantProfileRepository(pool),
+        conversation_store_builder=conversation_store,
+        tools=tools,
+    )
+    preflight = PreflightService(
+        identity=identity,
+        rate_limit=RateLimitService(),
+        subscriptions=subscriptions,
+        quota=usage_quota,
+    )
     return ProcessRuntime(
         pool=pool,
-        users=UserRuntimeFactory(
-            identity=IdentityService(PostgresAccountRepository(pool)),
-            subscriptions=SubscriptionService(),
-            user_profiles=PostgresUserProfileRepository(pool),
-            assistant_profiles=PostgresAssistantProfileRepository(pool),
-            conversation_store_builder=conversation_store,
-            tools=tools,
+        admissions=RequestAdmissionService(
+            preflight=preflight,
+            users=users,
+            quota=usage_quota,
         ),
+        users=users,
         tools=tools,
         telegram_updates=TelegramUpdateDeduplicator(
             PostgresTelegramUpdateClaimRepository(pool),
         ),
         user_work=UserWorkCoordinator(),
+        usage_quota=usage_quota,
     )
 
 
