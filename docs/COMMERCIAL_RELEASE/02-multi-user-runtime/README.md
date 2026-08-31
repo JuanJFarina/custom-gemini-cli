@@ -33,4 +33,41 @@ Propose any required database schema change before implementing it against an ex
 - Two users cannot access each other's conversations or profiles.
 - No runtime prompt or personal-history source is hardcoded to Juan.
 
+## Deployment
+
+Apply the idempotent schema script before deploying this workload:
+
+```bash
+psql "$POSTGRES_DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -f scripts/apply_multi_user_runtime.sql
+```
+
+The script preserves existing user UUIDs and conversations, backfills Telegram
+identities, and leaves existing accounts inactive. Provision Juan and each beta
+user explicitly before enabling webhook traffic:
+
+```bash
+python scripts/provision_user.py \
+  --telegram-id TELEGRAM_USER_ID \
+  --display-name "User Name" \
+  --plan-code basic \
+  --subscription-status active \
+  --preferred-name "Preferred Name" \
+  --locale en-US \
+  --timezone UTC \
+  --assistant-display-name Harle \
+  --assistant-profile-text "A concise and transparent AI personal assistant."
+```
+
+For Juan's existing context, also pass
+`--personal-history-file data/juan_personal_history.md` and his configured
+location and timezone.
+
+PostgreSQL is required for the Telegram runtime. Application startup validates
+the schema and never applies DDL.
+
+Do not roll out this workload to multiple real users until workload 3 is also
+deployed. Tool-family authorization is intentionally deferred, so the legacy
+global Google Sheets tools are not yet isolated.
+
 Depends on workload 1.

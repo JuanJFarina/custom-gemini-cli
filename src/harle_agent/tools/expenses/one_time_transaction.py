@@ -1,10 +1,10 @@
 from datetime import datetime
 from typing import Any
 
-from harle_agent.environment_knowledge import ROSARIO_TIMEZONE
 from harle_domain.tools.models import HarleTool, ToolCallResult
 
 from .utils import (
+    LEGACY_EXPENSE_TIMEZONE,
     MONTH_SHEET_MAPPING,
     GoogleSheetsClient,
     TransactionArgs,
@@ -19,8 +19,8 @@ class AddOneTimeTransactionArgs(TransactionArgs):
         return cls(
             amount=args["amount"],
             category=args["category"],
-            month=args.get("month") or datetime.now(ROSARIO_TIMEZONE).month,
-            day=args.get("day") or datetime.now(ROSARIO_TIMEZONE).day,
+            month=args.get("month") or datetime.now(LEGACY_EXPENSE_TIMEZONE).month,
+            day=args.get("day") or datetime.now(LEGACY_EXPENSE_TIMEZONE).day,
             is_refund=args.get("is_refund", False),
         )
 

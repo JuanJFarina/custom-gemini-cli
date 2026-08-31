@@ -3,10 +3,10 @@ from typing import Any
 
 from pydantic import Field
 
-from harle_agent.environment_knowledge import ROSARIO_TIMEZONE
 from harle_domain.tools.models import HarleTool, ToolCallResult
 
 from .utils import (
+    LEGACY_EXPENSE_TIMEZONE,
     MONTH_SHEET_MAPPING,
     GoogleSheetsClient,
     TargetYear,
@@ -19,7 +19,7 @@ class AddInInstallmentsTransactionArgs(TransactionArgs):
 
     @classmethod
     def from_args(cls, args: dict[str, Any]) -> "AddInInstallmentsTransactionArgs":
-        now = datetime.now(ROSARIO_TIMEZONE)
+        now = datetime.now(LEGACY_EXPENSE_TIMEZONE)
         return cls(
             amount=args["amount"],
             installments=int(args["installments"]),

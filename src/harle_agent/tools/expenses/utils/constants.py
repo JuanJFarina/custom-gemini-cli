@@ -1,7 +1,9 @@
 import re
+from zoneinfo import ZoneInfo
 
 CATEGORY_COLUMNS = ("B", "C", "D", "E", "F", "G", "H", "I")
 TOTAL_COLUMN = "J"
+LEGACY_EXPENSE_TIMEZONE = ZoneInfo("America/Argentina/Cordoba")
 
 MONTH_SHEET_MAPPING = {
     1: "enero",

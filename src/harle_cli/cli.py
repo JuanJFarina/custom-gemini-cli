@@ -4,10 +4,19 @@ from sys import stderr
 
 from harle_agent import __version__
 from harle_agent.agent import Harle
-from harle_agent.models import HarleStores
+from harle_agent.models import HarlePersonalContext, HarleStores
 from harle_agent.retry_decorator import ASSISTANT_FAILURES
 from harle_agent.stores import FileConversationStore
 from harle_domain.tools.models import HarleToolStore
+
+CLI_PERSONAL_CONTEXT = HarlePersonalContext(
+    user_name="CLI user",
+    preferred_name="User",
+    locale="und",
+    timezone="UTC",
+    assistant_profile="Harle is a concise and transparent AI personal assistant.",
+    personal_history="No personal history has been supplied.",
+)
 
 
 async def call_harle(harle: Harle, prompt: str) -> None:
@@ -31,6 +40,7 @@ def main() -> int:
     )
     harle = Harle(
         stores=harle_stores,
+        personal_context=CLI_PERSONAL_CONTEXT,
     )
 
     try:

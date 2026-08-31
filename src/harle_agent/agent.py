@@ -1,9 +1,7 @@
 import re
 from asyncio import Task, create_task, gather
 from collections.abc import Awaitable, Callable
-from pathlib import Path
 from time import time
-from typing import Any
 
 from google.genai import Client
 from google.genai.types import (
@@ -27,6 +25,7 @@ from .environment_knowledge import (
 )
 from .models import (
     HarleConfig,
+    HarlePersonalContext,
     HarleRunResult,
     HarleStores,
     HarleThought,
@@ -34,7 +33,7 @@ from .models import (
 )
 from .prompts import SYSTEM_PROMPT
 from .retry_decorator import retry
-from .settings import PERSONAL_HISTORY_PATH, get_agent_settings
+from .settings import get_agent_settings
 from .tools import TOOLS, show_tool_results
 
 SETTINGS = get_agent_settings()
@@ -43,19 +42,29 @@ SETTINGS = get_agent_settings()
 class Harle(BaseModel):
     config: HarleConfig = Field(default_factory=HarleConfig)
     stores: HarleStores
+    personal_context: HarlePersonalContext
     _client: Client | None = None
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
-    def model_post_init(self, _: Any, /) -> None:
+    def model_post_init(self, _: object, /) -> None:
         self._client = self._client or Client(api_key=self.config.api_key)
-        self.stores.tool_store.tools.extend(TOOLS)
+        registered_tool_names = {tool.name for tool in self.stores.tool_store.tools}
+        self.stores.tool_store.tools.extend(
+            tool for tool in TOOLS if tool.name not in registered_tool_names
+        )
 
     async def call(self, prompt: str) -> tuple[str, Task[None]]:
         start_time = time()
         log.info("Loading conversations and current weather")
         conversations_task = create_task(self.stores.conversation_store.load())
-        weather_task = create_task(get_current_weather())
+        weather_task = create_task(
+            get_current_weather(
+                latitude=self.personal_context.latitude,
+                longitude=self.personal_context.longitude,
+                timezone_name=self.personal_context.timezone,
+            ),
+        )
         conversations, current_weather = await gather(conversations_task, weather_task)
         log.info("Building system instruction")
         system_instruction = self._build_system_instruction(
@@ -230,19 +239,25 @@ class Harle(BaseModel):
 
     def _build_system_instruction(
         self,
-        latest_conversations: str,
+        conversations: str,
         *,
         current_weather: str,
     ) -> str:
-        tools_prompt = "\n".join([tool.prompt for tool in TOOLS])
+        tools_prompt = "\n".join(tool.prompt for tool in self.stores.tool_store.tools)
         system_instruction = SYSTEM_PROMPT.format(
+            user_name=self.personal_context.user_name,
+            preferred_name=self.personal_context.preferred_name,
+            locale=self.personal_context.locale,
+            timezone=self.personal_context.timezone,
+            assistant_profile=self.personal_context.assistant_profile,
+            personal_history=self.personal_context.personal_history,
+            conversations=conversations,
             tools=tools_prompt,
-            juan_personal_history_summary=_load_personal_history(PERSONAL_HISTORY_PATH),
-            current_time_and_date=get_current_time_and_date(),
+            current_time_and_date=get_current_time_and_date(
+                self.personal_context.timezone,
+            ),
             current_weather=current_weather,
-            latest_conversations=latest_conversations,
         )
-        log.debug(f"\n---------\n{system_instruction}\n---------\n")
         log.info(f"System Instructions Token Size: {len(system_instruction) / 4:.0f}")
         return system_instruction
 
@@ -253,17 +268,6 @@ async def _call_concurrently(
 ) -> list[ToolCallResult]:
     coroutines = [call_func(call) for call in calls]
     return await gather(*coroutines)
-
-
-def _load_personal_history(path: Path) -> str:
-    if not path.is_file():
-        log.warning(f"Personal history file {path} does not exist")
-        return "No personal history has been recorded yet."
-
-    content = path.read_text(encoding="utf-8").strip()
-    if not content:
-        log.warning("Personal history file is empty")
-    return content or "No personal history has been recorded yet."
 
 
 def _tool_results(
