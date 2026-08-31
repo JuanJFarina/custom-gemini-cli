@@ -1,6 +1,9 @@
+from datetime import datetime
 from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from harle_agent.environment_knowledge import ROSARIO_TIMEZONE
 
 DayNumber = Annotated[int, Field(ge=1, le=31)]
 MonthNumber = Annotated[int, Field(ge=1, le=12)]
@@ -29,18 +32,25 @@ class Transaction(TransactionArgs):
 
 
 class DayExpensesArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     days: list[DayNumber] = Field(
+        default_factory=lambda: [datetime.now(ROSARIO_TIMEZONE).day],
         description="Day or days of the expenses query, from 1 to 31.",
         min_length=1,
         max_length=31,
     )
     month: MonthNumber = Field(
+        default_factory=lambda: datetime.now(ROSARIO_TIMEZONE).month,
         description="The month of the expenses query, from 1 to 12.",
     )
 
 
 class MonthExpensesArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     months: list[MonthNumber] = Field(
+        default_factory=lambda: [datetime.now(ROSARIO_TIMEZONE).month],
         description="Month or months of the expenses query, from 1 to 12.",
         min_length=1,
         max_length=12,

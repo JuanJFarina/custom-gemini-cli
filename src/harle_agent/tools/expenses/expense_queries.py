@@ -1,5 +1,4 @@
 from collections.abc import Mapping
-from datetime import datetime, timedelta, timezone
 
 from gspread.utils import ValueRenderOption
 from pydantic import BaseModel
@@ -17,7 +16,6 @@ from .utils import (
 
 LAST_DAY_ROW = 32
 FINAL_TOTAL_ROW = LAST_DAY_ROW + 1
-EXPENSES_TIMEZONE = timezone(timedelta(hours=-3), name="ART")
 
 
 class TransactionEntry(BaseModel):
@@ -41,11 +39,7 @@ class MonthExpenses(BaseModel):
 
 async def get_day_expenses(args: Mapping[str, object]) -> ToolCallResult:
     sheets_client = GoogleSheetsClient()
-    today = _current_expenses_date()
-    validated_args = DayExpensesArgs(
-        days=args.get("days", [today.day]),
-        month=args.get("month", today.month),
-    )
+    validated_args = DayExpensesArgs.model_validate(args)
     days = sorted(set(validated_args.days))
     sheet_name = MONTH_SHEET_MAPPING[validated_args.month]
     ranges = [_day_range_name(sheet_name=sheet_name, day=day) for day in days]
@@ -80,10 +74,7 @@ async def get_day_expenses(args: Mapping[str, object]) -> ToolCallResult:
 
 async def get_month_expenses(args: Mapping[str, object]) -> ToolCallResult:
     sheets_client = GoogleSheetsClient()
-    today = _current_expenses_date()
-    validated_args = MonthExpensesArgs(
-        months=args.get("months", [today.month]),
-    )
+    validated_args = MonthExpensesArgs.model_validate(args)
     months = sorted(set(validated_args.months))
     ranges = [_month_range_name(month=month) for month in months]
     values = await sheets_client.get_values_for_ranges(
@@ -215,17 +206,13 @@ def _amount_from_value(value: object) -> int | float:
     return 0
 
 
-def _current_expenses_date() -> datetime:
-    return datetime.now(EXPENSES_TIMEZONE)
-
-
 GET_DAY_EXPENSES_PROMPT = """
 ## "get_day_expenses" tool
 
-- Tool for reading all transactions for one or more days in the same month.
+- Tool for reading per-category total expenses for one or more days in the same month.
 - Args:
-  - "days": Optional array of days to read, from 1 to 31. Defaults to the current day.
-  - "month": Optional integer of the month to read, from 1 to 12. Defaults to the current month.
+  - "days": Array of days to read, from 1 to 31. Defaults to an array with only the current day if not provided.
+  - "month": Integer of the month to read, from 1 to 12. Defaults to the current month if not provided.
 - Example:
 {
   "days": [5, 7],
@@ -238,9 +225,9 @@ GET_DAY_EXPENSES_PROMPT = """
 GET_MONTH_EXPENSES_PROMPT = """
 ## "get_month_expenses" tool
 
-- Tool for reading category totals and total amounts for one or more months.
+- Tool for reading per-category totals and aggregated total amounts for one or more months.
 - Args:
-  - "months": Optional array of months to read, from 1 to 12. Defaults to the current month.
+  - "months": Array of months to read, from 1 to 12. Defaults to an array with only the current month if not provided.
 - Example:
 {
   "months": [6, 7]
