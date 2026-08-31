@@ -1,4 +1,6 @@
+from datetime import datetime
 from typing import Protocol, runtime_checkable
+from uuid import UUID
 
 from harle_domain.tools.models import InternalToolCallInteraction
 
@@ -16,3 +18,14 @@ class ConversationStore(Protocol):
         interaction_index: int,
         model: str,
     ) -> None: ...
+
+
+@runtime_checkable
+class ConversationUsageRepository(Protocol):
+    async def count_completed_conversations(
+        self,
+        *,
+        user_id: UUID,
+        created_from: datetime,
+        created_before: datetime,
+    ) -> int: ...

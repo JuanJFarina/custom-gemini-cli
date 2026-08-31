@@ -11,6 +11,7 @@ from harle_api.telegram import (
     send_message,
     send_typing_action,
 )
+from harle_services.access import QuotaReservation, UsageQuotaService
 from harle_services.messaging import UserWorkCoordinator
 from harle_services.runtime import UserRuntime
 
@@ -19,14 +20,18 @@ async def process_telegram_message(
     message: IncomingTelegramMessage,
     user_runtime: UserRuntime,
     user_work: UserWorkCoordinator,
-    settings: ApiSettings | None = None,
+    usage_quota: UsageQuotaService,
+    quota_reservation: QuotaReservation,
 ) -> None:
-    async with user_work.serialize(user_runtime.resolved_user.user.id):
-        await _process_telegram_message(
-            message=message,
-            user_runtime=user_runtime,
-            settings=settings,
-        )
+    try:
+        async with user_work.serialize(user_runtime.resolved_user.user.id):
+            await _process_telegram_message(
+                message=message,
+                user_runtime=user_runtime,
+                settings=None,
+            )
+    finally:
+        await usage_quota.release(quota_reservation)
 
 
 async def _process_telegram_message(
@@ -55,13 +60,15 @@ async def _process_telegram_message(
     except ASSISTANT_FAILURES:
         response = "I can't respond right now. Please try again shortly."
 
-    await send_message(
-        bot_token=settings.TELEGRAM_BOT_TOKEN,
-        chat_id=message.chat_id,
-        text=response,
-    )
-    if saving_task is not None:
-        await saving_task
+    try:
+        await send_message(
+            bot_token=settings.TELEGRAM_BOT_TOKEN,
+            chat_id=message.chat_id,
+            text=response,
+        )
+    finally:
+        if saving_task is not None:
+            await saving_task
 
 
 async def _generate_response(

@@ -26,6 +26,7 @@ SCHEMA_PATHS = (
     ROOT / "scripts" / "apply_internal_expenses.sql",
     ROOT / "scripts" / "apply_internal_events.sql",
     ROOT / "scripts" / "apply_telegram_dedup_ordering.sql",
+    ROOT / "scripts" / "apply_bans_quotas.sql",
 )
 
 

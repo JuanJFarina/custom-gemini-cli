@@ -1,18 +1,12 @@
-from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
 
 from harle_domain.accounts.models import ResolvedUser, SubscriptionStatus
-from harle_utils import InactiveSubscriptionError
-
-
-def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+from harle_utils import Clock, InactiveSubscriptionError, utc_now
 
 
 @dataclass(frozen=True, slots=True)
 class SubscriptionService:
-    clock: Callable[[], datetime] = utc_now
+    clock: Clock = utc_now
 
     def require_active(self, resolved_user: ResolvedUser) -> ResolvedUser:
         user = resolved_user.user
