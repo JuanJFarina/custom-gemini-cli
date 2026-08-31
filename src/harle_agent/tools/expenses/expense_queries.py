@@ -3,7 +3,7 @@ from collections.abc import Mapping
 from gspread.utils import ValueRenderOption
 from pydantic import BaseModel
 
-from harle_agent.models import HarleTool, ToolCallResult
+from harle_domain.tools.models import HarleTool, ToolCallResult
 
 from .utils import (
     CATEGORY_COLUMNS,

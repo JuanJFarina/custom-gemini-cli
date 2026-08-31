@@ -6,8 +6,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
-from harle_agent.models import ConversationRecord, InternalToolCallInteraction
 from harle_agent.settings import get_agent_settings
+from harle_domain.conversations.models import ConversationRecord
+from harle_domain.tools.models import InternalToolCallInteraction
 
 TOKENS_CAP = get_agent_settings().MAX_CONVERSATION_TOKENS
 

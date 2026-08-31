@@ -1,4 +1,4 @@
-from harle_agent.models import HarleTool
+from harle_domain.tools.models import HarleTool
 
 SHARED_EXPENSES_TOOLS_PROMPT = """(for all expenses-related tools, follow these guidelines)
 

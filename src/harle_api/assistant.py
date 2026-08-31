@@ -3,7 +3,7 @@ from asyncio import Task
 import httpx
 
 from harle_agent.agent import Harle
-from harle_agent.models import ConversationStore, HarleStores, HarleToolStore
+from harle_agent.models import HarleStores
 from harle_agent.retry_decorator import ASSISTANT_FAILURES
 from harle_agent.stores import (
     PostgresConversationStore,
@@ -16,6 +16,8 @@ from harle_api.telegram import (
     send_message,
     send_typing_action,
 )
+from harle_domain.conversations.ports import ConversationStore
+from harle_domain.tools.models import HarleToolStore
 
 
 async def process_telegram_message(

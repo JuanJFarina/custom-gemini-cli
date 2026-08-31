@@ -3,9 +3,8 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from harle_agent.settings import get_agent_settings
-
-from .conversation_store import ConversationStore
-from .harle_tool import (
+from harle_domain.conversations.ports import ConversationStore
+from harle_domain.tools.models import (
     HarleToolStore,
     InternalToolCallInteraction,
     ToolCallAction,

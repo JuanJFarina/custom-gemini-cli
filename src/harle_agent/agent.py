@@ -14,6 +14,11 @@ from google.genai.types import (
 )
 from pydantic import BaseModel, ConfigDict, Field
 
+from harle_domain.tools.models import (
+    InternalToolCallInteraction,
+    ToolCall,
+    ToolCallResult,
+)
 from harle_utils import log
 
 from .environment_knowledge import (
@@ -26,9 +31,6 @@ from .models import (
     HarleStores,
     HarleThought,
     HarleThoughtAdapter,
-    InternalToolCallInteraction,
-    ToolCall,
-    ToolCallResult,
 )
 from .prompts import SYSTEM_PROMPT
 from .retry_decorator import retry

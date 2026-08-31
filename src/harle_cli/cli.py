@@ -4,9 +4,10 @@ from sys import stderr
 
 from harle_agent import __version__
 from harle_agent.agent import Harle
-from harle_agent.models import HarleStores, HarleToolStore
+from harle_agent.models import HarleStores
 from harle_agent.retry_decorator import ASSISTANT_FAILURES
 from harle_agent.stores import FileConversationStore
+from harle_domain.tools.models import HarleToolStore
 
 
 async def call_harle(harle: Harle, prompt: str) -> None:

@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 
 from harle_agent.environment_knowledge import ROSARIO_TIMEZONE
-from harle_agent.models import HarleTool, ToolCallResult
+from harle_domain.tools.models import HarleTool, ToolCallResult
 
 from .utils import (
     MONTH_SHEET_MAPPING,

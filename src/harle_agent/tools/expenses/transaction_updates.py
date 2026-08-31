@@ -2,7 +2,7 @@ from collections.abc import Mapping
 
 from pydantic import BaseModel
 
-from harle_agent.models import HarleTool, ToolCallResult
+from harle_domain.tools.models import HarleTool, ToolCallResult
 
 from .utils import (
     MONTH_SHEET_MAPPING,
