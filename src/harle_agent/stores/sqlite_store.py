@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sqlite3
+from collections.abc import Sequence
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
@@ -65,7 +66,15 @@ class SQLiteConversationStore:
 
         return "\n".join(reversed(conversations))
 
-    async def save(self, *, prompt: str, response_text: str, model: str) -> None:
+    async def save(
+        self,
+        *,
+        prompt: str,
+        response_text: str,
+        model: str,
+        telegram_update_ids: Sequence[int] = (),
+    ) -> None:
+        del telegram_update_ids
         await asyncio.to_thread(
             self._save_sync,
             prompt=prompt,

@@ -14,11 +14,12 @@ Provide every entitled user with private, passive, one-time events stored in Pos
 - Exclude cancelled or deleted events from normal reads.
 - Execute writes only when explicitly requested in the current message.
 
-## Decisions required before affected code
+## Decisions
 
-- Whether version 1 supports all-day events
-- Whether deletion is soft deletion or cancellation only
-- How long cancelled or deleted events remain available
+- Version 1 supports timed and all-day events.
+- Cancellation retains the event and hides it from normal reads.
+- Deletion permanently removes a scheduled or cancelled event.
+- Cancelled events have no automatic retention deadline or purge in version 1.
 
 ## Not included
 

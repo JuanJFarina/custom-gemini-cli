@@ -8,7 +8,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 class EventStatus(str, Enum):
     SCHEDULED = "scheduled"
     CANCELLED = "cancelled"
-    DELETED = "deleted"
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,15 +50,12 @@ class EventTimestamps:
     created_at: datetime
     updated_at: datetime
     cancelled_at: datetime | None = None
-    deleted_at: datetime | None = None
 
     def __post_init__(self) -> None:
         _require_aware(self.created_at, "Event creation time")
         _require_aware(self.updated_at, "Event update time")
         if self.cancelled_at is not None:
             _require_aware(self.cancelled_at, "Event cancellation time")
-        if self.deleted_at is not None:
-            _require_aware(self.deleted_at, "Event deletion time")
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,16 +66,10 @@ class InternalEvent:
     timestamps: EventTimestamps
 
     def __post_init__(self) -> None:
-        if self.status is EventStatus.SCHEDULED and (
-            self.cancelled_at is not None or self.deleted_at is not None
-        ):
-            raise ValueError("A scheduled event cannot be cancelled or deleted.")
-        if self.status is EventStatus.CANCELLED and (
-            self.cancelled_at is None or self.deleted_at is not None
-        ):
-            raise ValueError("A cancelled event requires only a cancellation time.")
-        if self.status is EventStatus.DELETED and self.deleted_at is None:
-            raise ValueError("A deleted event requires a deletion time.")
+        if self.status is EventStatus.SCHEDULED and self.cancelled_at is not None:
+            raise ValueError("A scheduled event cannot have a cancellation time.")
+        if self.status is EventStatus.CANCELLED and self.cancelled_at is None:
+            raise ValueError("A cancelled event requires a cancellation time.")
 
     @property
     def title(self) -> str:
@@ -120,10 +110,6 @@ class InternalEvent:
     @property
     def cancelled_at(self) -> datetime | None:
         return self.timestamps.cancelled_at
-
-    @property
-    def deleted_at(self) -> datetime | None:
-        return self.timestamps.deleted_at
 
 
 def _require_utc(value: datetime, label: str) -> None:

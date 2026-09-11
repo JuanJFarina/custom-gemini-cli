@@ -1,5 +1,5 @@
 import re
-from asyncio import Task, create_task, gather
+from asyncio import create_task, gather
 from collections.abc import Awaitable, Callable
 from time import time
 
@@ -17,7 +17,6 @@ from harle_domain.tools.models import (
     ToolCall,
     ToolCallResult,
 )
-from harle_domain.tools.policies import require_direct_request
 from harle_utils import log
 
 from .environment_knowledge import (
@@ -44,6 +43,7 @@ class Harle(BaseModel):
     config: HarleConfig = Field(default_factory=HarleConfig)
     stores: HarleStores
     personal_context: HarlePersonalContext
+    on_tool_started: Callable[[], Awaitable[None]] | None = None
     _client: Client | None = None
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
@@ -51,7 +51,7 @@ class Harle(BaseModel):
     def model_post_init(self, _: object, /) -> None:
         self._client = self._client or Client(api_key=self.config.api_key)
 
-    async def call(self, prompt: str) -> tuple[str, Task[None]]:
+    async def call(self, prompt: str) -> HarleRunResult:
         start_time = time()
         log.info("Loading conversations and current weather")
         conversations_task = create_task(self.stores.conversation_store.load())
@@ -73,10 +73,29 @@ class Harle(BaseModel):
             prompt=prompt,
             system_instruction=system_instruction,
         )
-        log.info("Creating task to save conversation")
-        task = self._save_conversation(prompt=prompt, run_result=run_result)
         log.info(f"Reason and act loop took {time() - start_time} seconds")
-        return run_result.response_text, task
+        return run_result
+
+    async def save(
+        self,
+        *,
+        prompt: str,
+        run_result: HarleRunResult,
+        telegram_update_ids: tuple[int, ...] = (),
+    ) -> None:
+        for interaction_index, interaction in enumerate(run_result.tool_interactions):
+            await self.stores.conversation_store.save_tool_call(
+                interaction=interaction,
+                interaction_index=interaction_index,
+                model=self.config.model,
+            )
+
+        await self.stores.conversation_store.save(
+            prompt=prompt,
+            response_text=run_result.response_text,
+            model=self.config.model,
+            telegram_update_ids=telegram_update_ids,
+        )
 
     async def _reason_and_act(
         self,
@@ -111,10 +130,7 @@ class Harle(BaseModel):
             )
 
         if harle_thought.action == "call_tool":
-            results = await self._call_tools_in_batches(
-                harle_thought.calls,
-                user_message=prompt,
-            )
+            results = await self._call_tools_in_batches(harle_thought.calls)
             interaction = InternalToolCallInteraction(
                 tool_calls=harle_thought.calls,
                 tool_results=results,
@@ -174,32 +190,9 @@ class Harle(BaseModel):
         response_text = self._extract_json_object(text_parts[-1])
         return HarleThoughtAdapter.validate_json(response_text)
 
-    def _save_conversation(self, prompt: str, run_result: HarleRunResult) -> Task[None]:
-        return create_task(self._save_conversation_run(prompt, run_result))
-
-    async def _save_conversation_run(
-        self,
-        prompt: str,
-        run_result: HarleRunResult,
-    ) -> None:
-        for interaction_index, interaction in enumerate(run_result.tool_interactions):
-            await self.stores.conversation_store.save_tool_call(
-                interaction=interaction,
-                interaction_index=interaction_index,
-                model=self.config.model,
-            )
-
-        await self.stores.conversation_store.save(
-            prompt=prompt,
-            response_text=run_result.response_text,
-            model=self.config.model,
-        )
-
     async def _call_tools_in_batches(
         self,
         calls: list[ToolCall],
-        *,
-        user_message: str,
     ) -> list[ToolCallResult]:
         results: list[ToolCallResult] = []
         concurrent_calls: list[ToolCall] = []
@@ -208,11 +201,11 @@ class Harle(BaseModel):
             if tool.can_run_concurrently:
                 concurrent_calls.append(call)
                 continue
-            results.append(await self._call_tool(call, user_message))
+            results.append(await self._call_tool(call))
         results.extend(
             await _call_concurrently(
                 concurrent_calls,
-                lambda call: self._call_tool(call, user_message),
+                self._call_tool,
             ),
         )
         return results
@@ -221,15 +214,11 @@ class Harle(BaseModel):
     async def _call_tool(
         self,
         call: ToolCall,
-        user_message: str,
     ) -> ToolCallResult:
         tool = self.stores.tool_store.get(call.tool_name)
-        require_direct_request(
-            definition=tool.definition,
-            call=call,
-            user_message=user_message,
-        )
         arguments = tool.definition.argument_model.model_validate(call.tool_args)
+        if self.on_tool_started is not None:
+            await self.on_tool_started()
         return await tool.handler(arguments)
 
     def _extract_json_object(self, text: str) -> str:

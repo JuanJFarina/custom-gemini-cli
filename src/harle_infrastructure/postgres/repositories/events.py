@@ -25,8 +25,7 @@ EVENT_COLUMNS = """
     status,
     created_at,
     updated_at,
-    cancelled_at,
-    deleted_at
+    cancelled_at
 """
 
 
@@ -58,12 +57,11 @@ class PostgresEventRepository:
                     status,
                     created_at,
                     updated_at,
-                    cancelled_at,
-                    deleted_at
+                    cancelled_at
                 )
                 VALUES (
                     $1, $2, $3, $4, $5, $6, $7,
-                    $8, $9, $10, $11, $12, $13
+                    $8, $9, $10, $11, $12
                 )
                 RETURNING {EVENT_COLUMNS}
                 """,
@@ -79,7 +77,6 @@ class PostgresEventRepository:
                 event.created_at,
                 event.updated_at,
                 event.cancelled_at,
-                event.deleted_at,
             )
         if row is None:
             raise RuntimeError("Could not create internal event.")
@@ -208,15 +205,11 @@ class PostgresEventRepository:
         *,
         user_id: UUID,
         event_id: UUID,
-        deleted_at: datetime,
     ) -> InternalEvent | None:
         async with self.pool.acquire() as connection:
             row = await connection.fetchrow(
                 f"""
-                UPDATE internal_events
-                SET status = 'deleted',
-                    updated_at = $3,
-                    deleted_at = $3
+                DELETE FROM internal_events
                 WHERE id = $1
                     AND user_id = $2
                     AND status IN ('scheduled', 'cancelled')
@@ -224,7 +217,6 @@ class PostgresEventRepository:
                 """,
                 event_id,
                 user_id,
-                deleted_at,
             )
         return _event_from_row(row) if row is not None else None
 
@@ -248,7 +240,6 @@ def _event_from_row(row: asyncpg.Record) -> InternalEvent:
             created_at=_datetime(row, "created_at"),
             updated_at=_datetime(row, "updated_at"),
             cancelled_at=_optional_datetime(row, "cancelled_at"),
-            deleted_at=_optional_datetime(row, "deleted_at"),
         ),
     )
 

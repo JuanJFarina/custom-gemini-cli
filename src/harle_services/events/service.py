@@ -187,7 +187,6 @@ class EventService:
         return await self.repository.delete(
             user_id=user_id,
             event_id=event_id,
-            deleted_at=self._now(),
         )
 
     def _now(self) -> datetime:

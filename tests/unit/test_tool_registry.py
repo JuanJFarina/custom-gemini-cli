@@ -4,9 +4,7 @@ from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
-from pydantic import BaseModel
 
-from harle_agent.prompts import SYSTEM_PROMPT
 from harle_domain.accounts import (
     ExternalIdentity,
     Plan,
@@ -16,26 +14,16 @@ from harle_domain.accounts import (
 )
 from harle_domain.events import EventRepository
 from harle_domain.expenses import ExpenseRepository
-from harle_domain.tools import (
-    ToolCall,
-    ToolDefinition,
-    ToolEffect,
-    ToolFamily,
-    require_direct_request,
-)
 from harle_infrastructure.google_sheets import (
     GoogleSheetsClient,
     GoogleSheetsConnectionSettings,
     LegacyGoogleSheetsSettings,
 )
 from harle_services.bootstrap import create_tools_injector
+from harle_services.tools import ToolInjectionContext
 from harle_utils import ToolAccessDeniedError, ToolUnavailableError
 
 NOW = datetime(2026, 8, 31, tzinfo=timezone.utc)
-
-
-class EmptyArgs(BaseModel):
-    pass
 
 
 def resolved_user(user_id: UUID) -> ResolvedUser:
@@ -81,8 +69,11 @@ def test_tool_access_matrix_and_lazy_sheets_configuration() -> None:
         expense_repository=expense_repository,
         event_repository=event_repository,
     ).inject(
-        resolved_user(uuid4()),
-        timezone="America/Argentina/Cordoba",
+        ToolInjectionContext(
+            resolved_user=resolved_user(uuid4()),
+            prompt="Show my expenses",
+            timezone="America/Argentina/Cordoba",
+        ),
     )
 
     assert {tool.name for tool in commercial_store.tools} == {
@@ -93,14 +84,8 @@ def test_tool_access_matrix_and_lazy_sheets_configuration() -> None:
         "summarize_expenses",
         "update_expense",
         "delete_expense",
-        "list_events",
-        "create_event",
-        "update_event",
-        "cancel_event",
-        "delete_event",
     }
     assert "Google Sheets" not in commercial_store.prompt
-    assert "add_one_time_transaction" not in SYSTEM_PROMPT
     with pytest.raises(ToolUnavailableError):
         commercial_store.get("add_one_time_transaction")
 
@@ -116,8 +101,11 @@ def test_tool_access_matrix_and_lazy_sheets_configuration() -> None:
         expense_repository=expense_repository,
         event_repository=event_repository,
     ).inject(
-        resolved_user(juan_id),
-        timezone="America/Argentina/Cordoba",
+        ToolInjectionContext(
+            resolved_user=resolved_user(juan_id),
+            prompt="Show my expenses",
+            timezone="America/Argentina/Cordoba",
+        ),
     )
 
     assert {tool.name for tool in juan_store.tools} == {
@@ -126,6 +114,19 @@ def test_tool_access_matrix_and_lazy_sheets_configuration() -> None:
         "get_day_expenses",
         "get_month_expenses",
         "remove_or_update_transaction",
+    }
+    event_store = create_tools_injector(
+        configured_settings,
+        expense_repository=expense_repository,
+        event_repository=event_repository,
+    ).inject(
+        ToolInjectionContext(
+            resolved_user=resolved_user(juan_id),
+            prompt="Create an event tomorrow",
+            timezone="America/Argentina/Cordoba",
+        ),
+    )
+    assert {tool.name for tool in event_store.tools} == {
         "list_events",
         "create_event",
         "update_event",
@@ -134,42 +135,22 @@ def test_tool_access_matrix_and_lazy_sheets_configuration() -> None:
     }
 
 
-def test_modifying_tools_require_a_direct_current_message_quote() -> None:
-    definition = ToolDefinition(
-        name="modify",
-        family=ToolFamily.LEGACY_GOOGLE_SHEETS_EXPENSES,
-        description="Modify data.",
-        argument_model=EmptyArgs,
-        effect=ToolEffect.MODIFY,
-        can_run_concurrently=False,
-    )
-
-    with pytest.raises(ToolAccessDeniedError):
-        require_direct_request(
-            definition=definition,
-            call=ToolCall(tool_name="modify", tool_args={}),
-            user_message="Read my expenses.",
-        )
-    with pytest.raises(ToolAccessDeniedError):
-        require_direct_request(
-            definition=definition,
-            call=ToolCall(
-                tool_name="modify",
-                tool_args={},
-                direct_request_quote="add an expense",
-            ),
-            user_message="Read my expenses.",
-        )
-
-    require_direct_request(
-        definition=definition,
-        call=ToolCall(
-            tool_name="modify",
-            tool_args={},
-            direct_request_quote="Add an expense",
+def test_tool_filter_uses_complete_terms_and_falls_back_to_all_families() -> None:
+    store = create_tools_injector(
+        LegacyGoogleSheetsSettings(_env_file=None),
+        expense_repository=cast(ExpenseRepository, object()),
+        event_repository=cast(EventRepository, object()),
+    ).inject(
+        ToolInjectionContext(
+            resolved_user=resolved_user(uuid4()),
+            prompt="I will eventually log lunch",
+            timezone="America/Argentina/Cordoba",
         ),
-        user_message="Please add an expense for lunch.",
     )
+
+    names = {tool.name for tool in store.tools}
+    assert "add_expense" in names
+    assert "create_event" in names
 
 
 def test_google_sheets_client_rechecks_uuid_before_write() -> None:

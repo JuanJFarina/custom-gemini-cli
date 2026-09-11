@@ -10,6 +10,8 @@ Prevent Telegram retries and concurrent requests from causing duplicate or confl
 - Claim each update before Gemini, quota checks, or tool execution.
 - Persist enough deduplication state to reject the same update after a process restart.
 - Serialize one user's conflicting work with a process-local coordinator.
+- Join consecutive messages into the active turn while reasoning remains safe to cancel and restart.
+- Queue later messages after tool execution or response delivery begins.
 - Keep different users independent.
 - Use stable update-derived identifiers for conversation and tool writes where needed.
 
@@ -27,5 +29,7 @@ Propose the minimal deduplication schema before changing an existing database. D
 - A duplicate update causes no second Gemini call, conversation, or tool change.
 - Conflicting work for one user is serialized.
 - One user's work does not block another user's work.
+- A message joined during reasoning restarts generation with the complete ordered turn.
+- A message received after tool execution starts becomes the next turn.
 
 Depends on workload 2.

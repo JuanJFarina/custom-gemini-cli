@@ -7,6 +7,7 @@ Reject abusive or over-quota requests before they invoke Gemini or tools.
 ## Scope
 
 - Keep a process-local rolling timestamp window per Telegram identity.
+- Count every newly persisted, non-duplicate Telegram message before aggregation.
 - Trigger a temporary ban on the tenth valid message within two seconds.
 - Escalate cooldowns from at least 60 seconds to 5 minutes and 1 hour.
 - Decay strikes after normal use and send at most one notice per cooldown.

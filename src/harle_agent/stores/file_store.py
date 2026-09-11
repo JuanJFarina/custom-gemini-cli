@@ -1,6 +1,6 @@
 import asyncio
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -45,7 +45,15 @@ class FileConversationStore:
 
         return "\n".join(reversed(conversations))
 
-    async def save(self, *, prompt: str, response_text: str, model: str) -> None:
+    async def save(
+        self,
+        *,
+        prompt: str,
+        response_text: str,
+        model: str,
+        telegram_update_ids: Sequence[int] = (),
+    ) -> None:
+        del telegram_update_ids
         await asyncio.to_thread(
             self._save_sync,
             prompt=prompt,

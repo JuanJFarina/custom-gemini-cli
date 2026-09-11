@@ -19,7 +19,6 @@ CREATE TABLE IF NOT EXISTS public.internal_events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     cancelled_at TIMESTAMPTZ,
-    deleted_at TIMESTAMPTZ,
     CONSTRAINT internal_events_title_not_blank CHECK (
         BTRIM(title) <> ''
     ),
@@ -30,25 +29,36 @@ CREATE TABLE IF NOT EXISTS public.internal_events (
         ends_at > starts_at
     ),
     CONSTRAINT internal_events_status_valid CHECK (
-        status IN ('scheduled', 'cancelled', 'deleted')
+        status IN ('scheduled', 'cancelled')
     ),
     CONSTRAINT internal_events_status_timestamps_valid CHECK (
         (
             status = 'scheduled'
             AND cancelled_at IS NULL
-            AND deleted_at IS NULL
         )
         OR (
             status = 'cancelled'
             AND cancelled_at IS NOT NULL
-            AND deleted_at IS NULL
-        )
-        OR (
-            status = 'deleted'
-            AND deleted_at IS NOT NULL
         )
     )
 );
+
+DELETE FROM public.internal_events
+WHERE status = 'deleted';
+
+ALTER TABLE public.internal_events
+    DROP CONSTRAINT IF EXISTS internal_events_status_timestamps_valid,
+    DROP CONSTRAINT IF EXISTS internal_events_status_valid,
+    DROP COLUMN IF EXISTS deleted_at;
+
+ALTER TABLE public.internal_events
+    ADD CONSTRAINT internal_events_status_valid CHECK (
+        status IN ('scheduled', 'cancelled')
+    ),
+    ADD CONSTRAINT internal_events_status_timestamps_valid CHECK (
+        (status = 'scheduled' AND cancelled_at IS NULL)
+        OR (status = 'cancelled' AND cancelled_at IS NOT NULL)
+    );
 
 CREATE INDEX IF NOT EXISTS idx_internal_events_user_starts_at
 ON public.internal_events (user_id, starts_at);

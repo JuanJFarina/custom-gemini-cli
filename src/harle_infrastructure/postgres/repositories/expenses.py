@@ -11,7 +11,6 @@ from harle_domain.expenses import (
     ExpenseDetails,
     ExpenseEntryType,
     ExpenseInstallment,
-    ExpenseStatus,
     ExpenseTimestamps,
     ExpenseTransaction,
 )
@@ -25,13 +24,11 @@ EXPENSE_COLUMNS = """
     category,
     transaction_date,
     description,
-    status,
     installment_group_id,
     installment_number,
     installment_count,
     created_at,
-    updated_at,
-    cancelled_at
+    updated_at
 """
 
 
@@ -96,7 +93,6 @@ class PostgresExpenseRepository:
                 SELECT {EXPENSE_COLUMNS}
                 FROM expense_transactions
                 WHERE user_id = $1
-                    AND status = 'active'
                     AND transaction_date >= $2
                     AND transaction_date <= $3
                 ORDER BY transaction_date, created_at, id
@@ -177,17 +173,15 @@ async def _insert_transaction(
             category,
             transaction_date,
             description,
-            status,
             installment_group_id,
             installment_number,
             installment_count,
             created_at,
-            updated_at,
-            cancelled_at
+            updated_at
         )
         VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8,
-            $9, $10, $11, $12, $13, $14, $15
+            $1, $2, $3, $4, $5, $6, $7,
+            $8, $9, $10, $11, $12, $13
         )
         RETURNING {EXPENSE_COLUMNS}
         """,
@@ -199,13 +193,11 @@ async def _insert_transaction(
         transaction.category.value,
         transaction.transaction_date,
         transaction.description,
-        transaction.status.value,
         transaction.installment_group_id,
         transaction.installment_number,
         transaction.installment_count,
         transaction.created_at,
         transaction.updated_at,
-        transaction.cancelled_at,
     )
     if row is None:
         raise RuntimeError("Could not create expense transaction.")
@@ -225,9 +217,7 @@ async def _update_transaction(
             category = $6,
             transaction_date = $7,
             description = $8,
-            status = $9,
-            updated_at = $10,
-            cancelled_at = $11
+            updated_at = $9
         WHERE id = $1
             AND user_id = $2
         RETURNING {EXPENSE_COLUMNS}
@@ -240,9 +230,7 @@ async def _update_transaction(
         transaction.category.value,
         transaction.transaction_date,
         transaction.description,
-        transaction.status.value,
         transaction.updated_at,
-        transaction.cancelled_at,
     )
     if row is None:
         raise RuntimeError("Expense transaction disappeared during correction.")
@@ -263,7 +251,6 @@ async def _fetch_related(
         FROM expense_transactions
         WHERE id = $1
             AND user_id = $2
-            AND status = 'active'
         {lock_clause}
         """,
         transaction_id,
@@ -279,7 +266,6 @@ async def _fetch_related(
             FROM expense_transactions
             WHERE id = $1
                 AND user_id = $2
-                AND status = 'active'
             {lock_clause}
             """,
             transaction_id,
@@ -293,7 +279,6 @@ async def _fetch_related(
             FROM expense_transactions
             WHERE user_id = $1
                 AND installment_group_id = $2
-                AND status = 'active'
             ORDER BY installment_number
             {lock_clause}
             """,
@@ -342,13 +327,11 @@ def _transaction_from_row(row: asyncpg.Record) -> ExpenseTransaction:
             category=ExpenseCategory(_text(row, "category")),
             transaction_date=_date(row, "transaction_date"),
             description=_text(row, "description"),
-            status=ExpenseStatus(_text(row, "status")),
         ),
         installment=_installment_from_row(row),
         timestamps=ExpenseTimestamps(
             created_at=_datetime(row, "created_at"),
             updated_at=_datetime(row, "updated_at"),
-            cancelled_at=_optional_datetime(row, "cancelled_at"),
         ),
     )
 
@@ -405,15 +388,6 @@ def _datetime(row: asyncpg.Record, key: str) -> datetime:
     value: object = row[key]
     if not isinstance(value, datetime):
         raise TypeError(f"Expected {key} to be a datetime.")
-    return value
-
-
-def _optional_datetime(row: asyncpg.Record, key: str) -> datetime | None:
-    value: object = row[key]
-    if value is None:
-        return None
-    if not isinstance(value, datetime):
-        raise TypeError(f"Expected {key} to be a datetime or null.")
     return value
 
 

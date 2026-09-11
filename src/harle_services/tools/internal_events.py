@@ -94,7 +94,7 @@ SHARED_INSTRUCTIONS = """For every internal event tool:
 - Timed event starts_at and ends_at are local ISO date-times without UTC offsets. A supplied IANA timezone overrides the user's profile timezone.
 - All-day events use start_date and inclusive end_date. Use the same date for a one-day event.
 - Use exactly one complete timed or all-day schedule. Updating a schedule may also change between timed and all-day.
-- Normal reads hide cancelled events; include them only when explicitly requested. Deleted events are always hidden and retained without automatic purging.
+- Normal reads hide cancelled events; include them only when explicitly requested. Deletion is permanent.
 - These passive one-time events never create recurrence, reminders, notifications, external calendar work, or background jobs."""
 
 DEFINITIONS = (
@@ -103,7 +103,7 @@ DEFINITIONS = (
         family=FAMILY,
         description=(
             "List events overlapping an inclusive local date range. Cancelled "
-            "events are optional and deleted events are excluded."
+            "events are optional."
         ),
         argument_model=ListEventsArgs,
         effect=ToolEffect.READ,
@@ -139,7 +139,7 @@ DEFINITIONS = (
     ToolDefinition(
         name="delete_event",
         family=FAMILY,
-        description="Soft-delete an owned scheduled or cancelled event by UUID.",
+        description="Permanently delete an owned scheduled or cancelled event by UUID.",
         argument_model=EventIdentifierArgs,
         effect=ToolEffect.MODIFY,
         can_run_concurrently=False,

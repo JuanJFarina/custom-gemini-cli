@@ -9,7 +9,6 @@ from .models import (
     ExpenseCategory,
     ExpenseCategoryTotal,
     ExpenseEntryType,
-    ExpenseStatus,
     ExpenseSummary,
     ExpenseTransaction,
 )
@@ -87,8 +86,6 @@ def summarize_expenses(
     date(year, month, 1)
     totals = {category: Decimal("0.00") for category in ExpenseCategory}
     for transaction in transactions:
-        if transaction.status is not ExpenseStatus.ACTIVE:
-            continue
         contribution = transaction.amount
         if transaction.entry_type is ExpenseEntryType.REFUND:
             contribution = -contribution

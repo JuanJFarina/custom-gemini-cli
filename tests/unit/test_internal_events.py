@@ -116,26 +116,12 @@ class FakeEventRepository:
         *,
         user_id: UUID,
         event_id: UUID,
-        deleted_at: datetime,
     ) -> InternalEvent | None:
         current = self.events.get(event_id)
-        if (
-            current is None
-            or current.user_id != user_id
-            or current.status is EventStatus.DELETED
-        ):
+        if current is None or current.user_id != user_id:
             return None
-        deleted = replace(
-            current,
-            details=replace(current.details, status=EventStatus.DELETED),
-            timestamps=replace(
-                current.timestamps,
-                updated_at=deleted_at,
-                deleted_at=deleted_at,
-            ),
-        )
-        self.events[event_id] = deleted
-        return deleted
+        del self.events[event_id]
+        return current
 
 
 def test_event_intervals_convert_local_and_all_day_boundaries() -> None:
@@ -161,7 +147,7 @@ def test_event_intervals_convert_local_and_all_day_boundaries() -> None:
         )
 
 
-def test_event_service_isolates_and_soft_deletes_events() -> None:
+def test_event_service_isolates_cancellation_and_physical_deletion() -> None:
     async def verify() -> None:
         repository = FakeEventRepository()
         service = EventService(repository, clock=lambda: NOW)
@@ -223,7 +209,7 @@ def test_event_service_isolates_and_soft_deletes_events() -> None:
 
         deleted = await service.delete(user_id=owner_id, event_id=event.id)
         assert deleted is not None
-        assert deleted.status is EventStatus.DELETED
+        assert event.id not in repository.events
         assert not await service.list_for_range(
             user_id=owner_id,
             query=EventQuery(

@@ -6,6 +6,7 @@ from uuid import uuid4
 import asyncpg
 import pytest
 
+from harle_domain.messaging import TelegramUpdateState
 from harle_domain.tools import (
     InternalToolCallInteraction,
     ToolCall,
@@ -14,7 +15,7 @@ from harle_domain.tools import (
 from harle_infrastructure.postgres import (
     PostgresConversationRepository,
     PostgresConversationStore,
-    PostgresTelegramUpdateClaimRepository,
+    PostgresTelegramUpdateRepository,
     create_postgres_pool,
     validate_postgres_schema,
 )
@@ -33,6 +34,7 @@ SCHEMA_PATHS = (
 async def verify_persistent_deduplication(database_url: str) -> None:
     user_id = uuid4()
     update_id = user_id.int % 8_000_000_000 + 1
+    second_update_id = update_id + 10
     telegram_user_id = update_id + 1
     chat_id = update_id + 2
     connection = await asyncpg.connect(database_url)
@@ -58,18 +60,21 @@ async def verify_persistent_deduplication(database_url: str) -> None:
         max_size=5,
     )
     try:
-        claims = PostgresTelegramUpdateClaimRepository(pool)
+        updates = PostgresTelegramUpdateRepository(pool)
         results = await asyncio.gather(
             *(
-                claims.claim(
+                updates.receive(
                     update_id=update_id,
                     telegram_user_id=telegram_user_id,
                     telegram_chat_id=chat_id,
+                    message_text="hello",
                 )
                 for _ in range(5)
             ),
         )
-        assert results.count(True) == 1
+        assert all(result.state is TelegramUpdateState.RECEIVED for result in results)
+        assert sum(result.newly_persisted for result in results) == 1
+        await updates.mark_processing([update_id])
     finally:
         await pool.close()
 
@@ -80,18 +85,27 @@ async def verify_persistent_deduplication(database_url: str) -> None:
     )
     try:
         await validate_postgres_schema(restarted_pool)
-        claims = PostgresTelegramUpdateClaimRepository(restarted_pool)
-        assert not await claims.claim(
+        updates = PostgresTelegramUpdateRepository(restarted_pool)
+        receipt = await updates.receive(
             update_id=update_id,
             telegram_user_id=telegram_user_id,
             telegram_chat_id=chat_id,
+            message_text="hello",
         )
+        assert receipt.state is TelegramUpdateState.PROCESSING
+        assert not receipt.newly_persisted
+        second_receipt = await updates.receive(
+            update_id=second_update_id,
+            telegram_user_id=telegram_user_id,
+            telegram_chat_id=chat_id,
+            message_text="again",
+        )
+        assert second_receipt.newly_persisted
 
         conversations = PostgresConversationStore(
             repository=PostgresConversationRepository(restarted_pool),
             user_id=user_id,
             telegram_chat_id=chat_id,
-            telegram_update_id=update_id,
         )
         interaction = InternalToolCallInteraction(
             tool_calls=[ToolCall(tool_name="list_events", tool_args={})],
@@ -99,39 +113,40 @@ async def verify_persistent_deduplication(database_url: str) -> None:
                 ToolCallResult(called_tool_name="list_events", result={"ok": True}),
             ],
         )
-        for _ in range(2):
-            await conversations.save_tool_call(
-                interaction=interaction,
-                interaction_index=0,
-                model="fake",
-            )
-            await conversations.save(
-                prompt="hello",
-                response_text="hi",
-                model="fake",
-            )
+        await conversations.save_tool_call(
+            interaction=interaction,
+            interaction_index=0,
+            model="fake",
+        )
+        await conversations.save(
+            prompt="hello\nagain",
+            response_text="hi",
+            model="fake",
+            telegram_update_ids=[update_id, second_update_id],
+        )
 
         async with restarted_pool.acquire() as check:
-            counts = await check.fetchrow(
+            rows = await check.fetch(
                 """
                 SELECT
-                    COUNT(*) FILTER (WHERE kind = 'conversation') AS conversations,
-                    COUNT(*) FILTER (WHERE kind = 'tool_call') AS tool_calls
-                FROM conversations
-                WHERE telegram_update_id = $1
+                    update_id,
+                    status,
+                    conversation_id
+                FROM telegram_update_claims
+                WHERE update_id = ANY($1::bigint[])
+                ORDER BY update_id
                 """,
-                update_id,
+                [update_id, second_update_id],
             )
-        assert counts is not None
-        assert counts["conversations"] == 1
-        assert counts["tool_calls"] == 1
+        assert [row["status"] for row in rows] == ["delivered", "delivered"]
+        assert len({row["conversation_id"] for row in rows}) == 1
     finally:
         await restarted_pool.close()
         cleanup = await asyncpg.connect(database_url)
         try:
             await cleanup.execute(
-                "DELETE FROM telegram_update_claims WHERE update_id = $1",
-                update_id,
+                "DELETE FROM telegram_update_claims WHERE update_id = ANY($1::bigint[])",
+                [update_id, second_update_id],
             )
             await cleanup.execute("DELETE FROM users WHERE id = $1", user_id)
         finally:

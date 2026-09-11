@@ -13,13 +13,15 @@ Build tools per request and make Juan's existing Google Sheets expenses inaccess
 - Move Sheets client construction and settings into infrastructure with explicit injection.
 - Add authorization guards before client construction and again before modifying Sheets.
 - Preserve existing Google Sheets expense behavior.
-- Permit modifying tools only when the current user message explicitly requests the change.
+- Select likely tool families with explicit English and Spanish terms, and expose all authorized families when no term matches.
+- Let Harle execute a modifying tool when it interprets the current user prompt as requesting the operation.
 
 ## Not included
 
 - Model-based tool relevance ranking
 - Multi-user Google OAuth or Sheets access
 - Persisted proposed actions, audits, or confirmation buttons
+- A separate runtime gate for model-selected modifying tools
 - Internal PostgreSQL expense tools
 
 ## Done when

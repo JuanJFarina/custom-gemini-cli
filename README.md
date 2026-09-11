@@ -139,10 +139,14 @@ EXPENSES_SPREADSHEET_ID=your_expenses_spreadsheet_id_here
 GOOGLE_SERVICE_ACCOUNT_JSON_BASE64=base64_encoded_service_account_json_here
 ```
 
-Before deployment, apply the multi-user schema manually:
+Before deployment, apply every commercial schema script in order:
 
 ```powershell
 psql "$env:POSTGRES_DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/apply_multi_user_runtime.sql
+psql "$env:POSTGRES_DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/apply_internal_expenses.sql
+psql "$env:POSTGRES_DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/apply_internal_events.sql
+psql "$env:POSTGRES_DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/apply_telegram_dedup_ordering.sql
+psql "$env:POSTGRES_DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/apply_bans_quotas.sql
 ```
 
 Then provision every allowed beta user:

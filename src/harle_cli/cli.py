@@ -22,10 +22,10 @@ CLI_PERSONAL_CONTEXT = HarlePersonalContext(
 
 
 async def call_harle(harle: Harle, prompt: str) -> None:
-    response_text, saving_task = await harle.call(prompt)
-    if response_text:
-        print(f"\nGemini: {response_text}\n")
-    await saving_task
+    result = await harle.call(prompt)
+    if result.response_text:
+        print(f"\nGemini: {result.response_text}\n")
+    await harle.save(prompt=prompt, run_result=result)
 
 
 def main() -> int:

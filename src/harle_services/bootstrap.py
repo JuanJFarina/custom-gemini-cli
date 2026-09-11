@@ -17,25 +17,16 @@ from harle_infrastructure.postgres import (
     PostgresConversationStore,
     PostgresEventRepository,
     PostgresExpenseRepository,
-    PostgresTelegramUpdateClaimRepository,
+    PostgresTelegramUpdateRepository,
     PostgresUserProfileRepository,
     create_postgres_pool,
     validate_postgres_schema,
 )
-from harle_services.access import (
-    IdentityService,
-    PreflightService,
-    RateLimitService,
-    SubscriptionService,
-    UsageQuotaService,
-)
+from harle_services.access import PreflightService
 from harle_services.events import EventService
 from harle_services.expenses import ExpenseService
-from harle_services.messaging import (
-    TelegramUpdateDeduplicator,
-    UserWorkCoordinator,
-)
-from harle_services.runtime import RequestAdmissionService, UserRuntimeFactory
+from harle_services.messaging import MessageCoordinator
+from harle_services.runtime import UserRuntimeFactory
 from harle_services.tools import (
     ToolAccessPolicy,
     ToolFamilyRegistration,
@@ -50,12 +41,10 @@ from harle_services.tools import (
 @dataclass(frozen=True, slots=True)
 class ProcessRuntime:
     pool: asyncpg.Pool
-    admissions: RequestAdmissionService
+    preflight: PreflightService
     users: UserRuntimeFactory
     tools: ToolsInjector
-    telegram_updates: TelegramUpdateDeduplicator
-    user_work: UserWorkCoordinator
-    usage_quota: UsageQuotaService
+    messages: MessageCoordinator
 
 
 def create_tools_injector(
@@ -122,46 +111,31 @@ async def create_process_runtime(
     def conversation_store(
         user_id: UUID,
         chat_id: int,
-        update_id: int,
     ) -> ConversationStore:
         return PostgresConversationStore(
             repository=conversations,
             user_id=user_id,
             telegram_chat_id=chat_id,
-            telegram_update_id=update_id,
         )
 
-    identity = IdentityService(accounts)
-    subscriptions = SubscriptionService()
-    usage_quota = UsageQuotaService(conversations)
     users = UserRuntimeFactory(
-        identity=identity,
-        subscriptions=subscriptions,
         user_profiles=PostgresUserProfileRepository(pool),
         assistant_profiles=PostgresAssistantProfileRepository(pool),
         conversation_store_builder=conversation_store,
-        tools=tools,
     )
     preflight = PreflightService(
-        identity=identity,
-        rate_limit=RateLimitService(),
-        subscriptions=subscriptions,
-        quota=usage_quota,
+        accounts=accounts,
+        conversations=conversations,
     )
     return ProcessRuntime(
         pool=pool,
-        admissions=RequestAdmissionService(
-            preflight=preflight,
-            users=users,
-            quota=usage_quota,
-        ),
+        preflight=preflight,
         users=users,
         tools=tools,
-        telegram_updates=TelegramUpdateDeduplicator(
-            PostgresTelegramUpdateClaimRepository(pool),
+        messages=MessageCoordinator(
+            PostgresTelegramUpdateRepository(pool),
+            preflight.check_rate_limit,
         ),
-        user_work=UserWorkCoordinator(),
-        usage_quota=usage_quota,
     )
 
 

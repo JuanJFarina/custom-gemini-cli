@@ -7,13 +7,12 @@ from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from harle_agent import __version__
-from harle_api.assistant import process_telegram_message
+from harle_api.assistant import process_telegram_messages
 from harle_api.exception_handlers import register_exception_handlers
 from harle_api.runtime import ApiRuntime, close_runtime, create_runtime
 from harle_api.settings import get_settings
 from harle_api.telegram import extract_text_message, send_message
-from harle_services.access import QuotaExceeded, TemporaryBan
-from harle_services.runtime import RequestAccepted
+from harle_services.messaging import MessageSubmissionStatus
 
 
 @asynccontextmanager
@@ -59,24 +58,18 @@ async def post_telegram_webhook(
         return JSONResponse(content={"ok": True, "accepted": False})
 
     runtime = _runtime(request)
-    claimed = await runtime.telegram_updates.claim(
+    submission = await runtime.messages.receive(
         update_id=message.update_id,
         telegram_user_id=message.user_id,
         telegram_chat_id=message.chat_id,
+        text=message.text,
     )
-    if not claimed:
-        return JSONResponse(
-            content={"ok": True, "accepted": False, "duplicate": True},
-        )
-
-    admission = await runtime.admissions.admit(
-        telegram_user_id=message.user_id,
-        telegram_chat_id=message.chat_id,
-        telegram_update_id=message.update_id,
-    )
-    if isinstance(admission, TemporaryBan):
-        retry_at = _utc_boundary(admission.blocked_until)
-        if admission.notify_user:
+    if submission.status is MessageSubmissionStatus.RATE_LIMITED:
+        temporary_ban = submission.temporary_ban
+        if temporary_ban is None:
+            raise RuntimeError("Rate-limited submission has no ban details.")
+        retry_at = _utc_boundary(temporary_ban.blocked_until)
+        if temporary_ban.notify_user:
             background_tasks.add_task(
                 send_message,
                 bot_token=settings.TELEGRAM_BOT_TOKEN,
@@ -89,47 +82,38 @@ async def post_telegram_webhook(
                 "accepted": False,
                 "reason": "temporarily_banned",
                 "retry_at": retry_at,
-                "notified": admission.notify_user,
+                "notified": temporary_ban.notify_user,
             },
         )
-
-    if isinstance(admission, QuotaExceeded):
-        reset_at = _utc_boundary(admission.resets_at)
-        background_tasks.add_task(
-            send_message,
-            bot_token=settings.TELEGRAM_BOT_TOKEN,
-            chat_id=message.chat_id,
-            text=(
-                f"You have {admission.remaining} requests remaining this month. "
-                f"Your allowance resets at {reset_at}."
-            ),
+    if submission.status in {
+        MessageSubmissionStatus.DUPLICATE,
+        MessageSubmissionStatus.DELIVERED,
+    }:
+        return JSONResponse(
+            content={"ok": True, "accepted": False, "duplicate": True},
         )
+
+    if submission.status is MessageSubmissionStatus.INTERRUPTED:
         return JSONResponse(
             content={
                 "ok": True,
                 "accepted": False,
-                "reason": "monthly_quota_exceeded",
-                "remaining": admission.remaining,
-                "reset_at": reset_at,
+                "reason": "interrupted_after_tool_execution",
             },
         )
 
-    if not isinstance(admission, RequestAccepted):
-        raise RuntimeError("Unexpected request admission result.")
-    background_tasks.add_task(
-        process_telegram_message,
-        message=message,
-        user_runtime=admission.user_runtime,
-        user_work=runtime.user_work,
-        usage_quota=runtime.usage_quota,
-        quota_reservation=admission.quota_reservation,
-    )
+    if submission.starts_processing:
+        background_tasks.add_task(
+            process_telegram_messages,
+            telegram_user_id=message.user_id,
+            runtime=runtime,
+        )
+
     return JSONResponse(
         content={
             "ok": True,
             "accepted": True,
-            "remaining": admission.quota_reservation.remaining,
-            "reset_at": _utc_boundary(admission.quota_reservation.resets_at),
+            "disposition": submission.status.value,
         },
     )
 

@@ -1,7 +1,15 @@
-from .coordinator import UserWorkCoordinator
-from .deduplication import TelegramUpdateDeduplicator
+from .coordinator import (
+    MessageCoordinator,
+    MessageFragment,
+    MessageSubmission,
+    MessageSubmissionStatus,
+    MessageTurn,
+)
 
 __all__ = [
-    "TelegramUpdateDeduplicator",
-    "UserWorkCoordinator",
+    "MessageCoordinator",
+    "MessageFragment",
+    "MessageSubmission",
+    "MessageSubmissionStatus",
+    "MessageTurn",
 ]

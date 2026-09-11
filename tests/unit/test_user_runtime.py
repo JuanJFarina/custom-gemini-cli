@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -8,7 +8,6 @@ from uuid import UUID, uuid4
 import pytest
 
 from harle_domain.accounts import (
-    AccountRepository,
     ExternalIdentity,
     Plan,
     ResolvedUser,
@@ -18,52 +17,11 @@ from harle_domain.accounts import (
 from harle_domain.profiles import AssistantProfile, UserProfile
 from harle_domain.tools.models import (
     InternalToolCallInteraction,
-    ToolFamily,
 )
-from harle_services.access import IdentityService, SubscriptionService
 from harle_services.runtime import UserRuntimeFactory
-from harle_services.tools import (
-    ToolAccessPolicy,
-    ToolFamilyRegistration,
-    ToolRegistry,
-    ToolsInjector,
-)
-from harle_utils import UnknownIdentityError
+from harle_utils import MissingProfileError
 
 NOW = datetime(2026, 8, 31, tzinfo=timezone.utc)
-EMPTY_TOOLS = ToolsInjector(
-    registry=ToolRegistry(
-        registrations=(
-            ToolFamilyRegistration(
-                family=ToolFamily.INTERNAL_EXPENSES,
-                instructions="No tools are configured.",
-                definitions=(),
-                handler_factory=lambda _: {},
-            ),
-            ToolFamilyRegistration(
-                family=ToolFamily.INTERNAL_EVENTS,
-                instructions="No event tools are configured.",
-                definitions=(),
-                handler_factory=lambda _: {},
-            ),
-        ),
-    ),
-    access_policy=ToolAccessPolicy(legacy_google_sheets_user_id=None),
-)
-
-
-class FakeAccounts(AccountRepository):
-    def __init__(self, users: Mapping[int, ResolvedUser]) -> None:
-        self.users = users
-
-    async def resolve_telegram_identity(
-        self,
-        *,
-        telegram_user_id: int,
-    ) -> ResolvedUser | None:
-        return self.users.get(telegram_user_id)
-
-
 class FakeUserProfiles:
     def __init__(self, profiles: Mapping[UUID, UserProfile]) -> None:
         self.profiles = profiles
@@ -99,15 +57,22 @@ class FakeAssistantProfiles:
 
 
 class FakeConversationStore:
-    def __init__(self, user_id: UUID, chat_id: int, update_id: int) -> None:
+    def __init__(self, user_id: UUID, chat_id: int) -> None:
         self.user_id = user_id
         self.chat_id = chat_id
-        self.update_id = update_id
 
     async def load(self) -> str:
         return "No conversations yet"
 
-    async def save(self, *, prompt: str, response_text: str, model: str) -> None:
+    async def save(
+        self,
+        *,
+        prompt: str,
+        response_text: str,
+        model: str,
+        telegram_update_ids: Sequence[int] = (),
+    ) -> None:
+        del prompt, response_text, model, telegram_update_ids
         return None
 
     async def save_tool_call(
@@ -179,26 +144,21 @@ def test_runtime_is_immutable_and_isolates_two_users() -> None:
         for item in (first, second)
     }
     factory = UserRuntimeFactory(
-        identity=IdentityService(FakeAccounts({101: first, 202: second})),
-        subscriptions=SubscriptionService(clock=lambda: NOW),
         user_profiles=FakeUserProfiles(user_profiles),
         assistant_profiles=FakeAssistantProfiles(assistant_profiles),
         conversation_store_builder=FakeConversationStore,
-        tools=EMPTY_TOOLS,
     )
 
     first_runtime = asyncio.run(
-        factory.create(
-            telegram_user_id=101,
+        factory.create_for_resolved_user(
+            resolved_user=first,
             telegram_chat_id=1001,
-            telegram_update_id=10001,
         ),
     )
     second_runtime = asyncio.run(
-        factory.create(
-            telegram_user_id=202,
+        factory.create_for_resolved_user(
+            resolved_user=second,
             telegram_chat_id=2002,
-            telegram_update_id=20002,
         ),
     )
 
@@ -208,31 +168,25 @@ def test_runtime_is_immutable_and_isolates_two_users() -> None:
     assert isinstance(second_runtime.conversation_store, FakeConversationStore)
     assert first_runtime.conversation_store.user_id == first.user.id
     assert second_runtime.conversation_store.user_id == second.user.id
-    assert first_runtime.telegram_update_id == 10001
-    assert second_runtime.telegram_update_id == 20002
     attribute = "telegram_chat_id"
     with pytest.raises(FrozenInstanceError):
         setattr(first_runtime, attribute, 9)
 
 
-def test_unknown_identity_stops_before_profile_loading() -> None:
+def test_missing_profile_stops_runtime_construction() -> None:
     profiles = FakeUserProfiles({})
     factory = UserRuntimeFactory(
-        identity=IdentityService(FakeAccounts({})),
-        subscriptions=SubscriptionService(clock=lambda: NOW),
         user_profiles=profiles,
         assistant_profiles=FakeAssistantProfiles({}),
         conversation_store_builder=FakeConversationStore,
-        tools=EMPTY_TOOLS,
     )
 
-    with pytest.raises(UnknownIdentityError):
+    with pytest.raises(MissingProfileError):
         asyncio.run(
-            factory.create(
-                telegram_user_id=404,
+            factory.create_for_resolved_user(
+                resolved_user=resolved_user(404, "Missing"),
                 telegram_chat_id=1,
-                telegram_update_id=404,
             ),
         )
 
-    assert profiles.calls == 0
+    assert profiles.calls == 1

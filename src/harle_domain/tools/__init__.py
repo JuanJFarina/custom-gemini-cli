@@ -11,7 +11,6 @@ from harle_domain.tools.models import (
     ToolFamily,
     ToolHandler,
 )
-from harle_domain.tools.policies import require_direct_request
 
 __all__ = [
     "HarleTool",
@@ -25,5 +24,4 @@ __all__ = [
     "ToolExecutionContext",
     "ToolFamily",
     "ToolHandler",
-    "require_direct_request",
 ]

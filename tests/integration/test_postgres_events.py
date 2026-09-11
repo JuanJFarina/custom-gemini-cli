@@ -133,7 +133,7 @@ async def verify_event_isolation(database_url: str) -> None:
         assert cancelled.status is EventStatus.CANCELLED
         deleted = await service.delete(user_id=first_id, event_id=first.id)
         assert deleted is not None
-        assert deleted.status is EventStatus.DELETED
+        assert deleted.status is EventStatus.CANCELLED
         assert not await service.list_for_range(
             user_id=first_id,
             query=EventQuery(

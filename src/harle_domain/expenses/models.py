@@ -25,11 +25,6 @@ class ExpenseCategory(str, Enum):
     OTHER = "other"
 
 
-class ExpenseStatus(str, Enum):
-    ACTIVE = "active"
-    CANCELLED = "cancelled"
-
-
 @dataclass(frozen=True, slots=True)
 class ExpenseDetails:
     entry_type: ExpenseEntryType
@@ -38,7 +33,6 @@ class ExpenseDetails:
     category: ExpenseCategory
     transaction_date: date
     description: str
-    status: ExpenseStatus
 
     def __post_init__(self) -> None:
         _validate_amount(self.amount)
@@ -65,7 +59,6 @@ class ExpenseInstallment:
 class ExpenseTimestamps:
     created_at: datetime
     updated_at: datetime
-    cancelled_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,10 +71,6 @@ class ExpenseTransaction:
 
     def __post_init__(self) -> None:
         _validate_installments(self)
-        if self.status is ExpenseStatus.ACTIVE and self.cancelled_at is not None:
-            raise ValueError("An active expense cannot have a cancellation time.")
-        if self.status is ExpenseStatus.CANCELLED and self.cancelled_at is None:
-            raise ValueError("A cancelled expense requires a cancellation time.")
 
     @property
     def is_installment(self) -> bool:
@@ -112,10 +101,6 @@ class ExpenseTransaction:
         return self.details.description
 
     @property
-    def status(self) -> ExpenseStatus:
-        return self.details.status
-
-    @property
     def installment_group_id(self) -> UUID | None:
         return self.installment.group_id if self.installment is not None else None
 
@@ -134,10 +119,6 @@ class ExpenseTransaction:
     @property
     def updated_at(self) -> datetime:
         return self.timestamps.updated_at
-
-    @property
-    def cancelled_at(self) -> datetime | None:
-        return self.timestamps.cancelled_at
 
 
 @dataclass(frozen=True, slots=True)

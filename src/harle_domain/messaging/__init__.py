@@ -1,3 +1,11 @@
-from .ports import TelegramUpdateClaimRepository
+from .ports import (
+    TelegramUpdateReceipt,
+    TelegramUpdateRepository,
+    TelegramUpdateState,
+)
 
-__all__ = ["TelegramUpdateClaimRepository"]
+__all__ = [
+    "TelegramUpdateReceipt",
+    "TelegramUpdateRepository",
+    "TelegramUpdateState",
+]

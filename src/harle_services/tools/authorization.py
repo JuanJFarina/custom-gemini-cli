@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from uuid import UUID
 
-from harle_domain.accounts import ResolvedUser, SubscriptionStatus
+from harle_domain.accounts import ResolvedUser
 from harle_domain.tools import ToolFamily
 
 
@@ -14,11 +14,6 @@ class ToolAccessPolicy:
         resolved_user: ResolvedUser,
     ) -> frozenset[ToolFamily]:
         user = resolved_user.user
-        if (
-            not resolved_user.plan.active
-            or user.subscription_status is not SubscriptionStatus.ACTIVE
-        ):
-            return frozenset()
         if user.id == self.legacy_google_sheets_user_id:
             return frozenset(
                 {

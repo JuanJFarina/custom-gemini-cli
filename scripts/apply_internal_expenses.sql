@@ -15,13 +15,11 @@ CREATE TABLE IF NOT EXISTS public.expense_transactions (
     category TEXT NOT NULL,
     transaction_date DATE NOT NULL,
     description TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'active',
     installment_group_id UUID,
     installment_number SMALLINT,
     installment_count SMALLINT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    cancelled_at TIMESTAMPTZ,
     CONSTRAINT expense_transactions_entry_type_valid CHECK (
         entry_type IN ('expense', 'refund')
     ),
@@ -46,13 +44,6 @@ CREATE TABLE IF NOT EXISTS public.expense_transactions (
     CONSTRAINT expense_transactions_description_not_blank CHECK (
         BTRIM(description) <> ''
     ),
-    CONSTRAINT expense_transactions_status_valid CHECK (
-        status IN ('active', 'cancelled')
-    ),
-    CONSTRAINT expense_transactions_status_timestamp_valid CHECK (
-        (status = 'active' AND cancelled_at IS NULL)
-        OR (status = 'cancelled' AND cancelled_at IS NOT NULL)
-    ),
     CONSTRAINT expense_transactions_installments_complete CHECK (
         (
             installment_group_id IS NULL
@@ -71,11 +62,16 @@ CREATE TABLE IF NOT EXISTS public.expense_transactions (
         UNIQUE (user_id, installment_group_id, installment_number)
 );
 
+ALTER TABLE public.expense_transactions
+    DROP CONSTRAINT IF EXISTS expense_transactions_status_timestamp_valid,
+    DROP CONSTRAINT IF EXISTS expense_transactions_status_valid,
+    DROP COLUMN IF EXISTS cancelled_at,
+    DROP COLUMN IF EXISTS status;
+
 CREATE INDEX IF NOT EXISTS idx_expense_transactions_user_date
 ON public.expense_transactions (user_id, transaction_date DESC);
 
-CREATE INDEX IF NOT EXISTS idx_expense_transactions_user_status_date
-ON public.expense_transactions (user_id, status, transaction_date DESC);
+DROP INDEX IF EXISTS public.idx_expense_transactions_user_status_date;
 
 CREATE INDEX IF NOT EXISTS idx_expense_transactions_user_category_date
 ON public.expense_transactions (user_id, category, transaction_date DESC);

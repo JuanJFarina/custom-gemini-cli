@@ -147,7 +147,7 @@ DEFINITIONS = (
     ToolDefinition(
         name="list_expenses",
         family=FAMILY,
-        description="List active expenses and refunds for one calendar date.",
+        description="List expenses and refunds for one calendar date.",
         argument_model=ListExpensesArgs,
         effect=ToolEffect.READ,
         can_run_concurrently=True,
@@ -155,7 +155,7 @@ DEFINITIONS = (
     ToolDefinition(
         name="summarize_expenses",
         family=FAMILY,
-        description="Summarize one month's active expenses by category.",
+        description="Summarize one month's expenses by category.",
         argument_model=SummarizeExpensesArgs,
         effect=ToolEffect.READ,
         can_run_concurrently=True,

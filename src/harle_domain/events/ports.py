@@ -52,5 +52,4 @@ class EventRepository(Protocol):
         *,
         user_id: UUID,
         event_id: UUID,
-        deleted_at: datetime,
     ) -> InternalEvent | None: ...

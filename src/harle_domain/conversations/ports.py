@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 from uuid import UUID
@@ -9,7 +10,14 @@ from harle_domain.tools.models import InternalToolCallInteraction
 class ConversationStore(Protocol):
     async def load(self) -> str: ...
 
-    async def save(self, *, prompt: str, response_text: str, model: str) -> None: ...
+    async def save(
+        self,
+        *,
+        prompt: str,
+        response_text: str,
+        model: str,
+        telegram_update_ids: Sequence[int] = (),
+    ) -> None: ...
 
     async def save_tool_call(
         self,

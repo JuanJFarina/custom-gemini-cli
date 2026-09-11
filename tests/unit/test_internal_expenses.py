@@ -7,7 +7,6 @@ from uuid import UUID, uuid4
 from harle_domain.expenses import (
     ExpenseCategory,
     ExpenseEntryType,
-    ExpenseStatus,
     ExpenseTransaction,
     installment_dates,
     resolve_transaction_date,
@@ -70,7 +69,6 @@ class FakeExpenseRepository:
             for transaction in self.transactions.values()
             if transaction.user_id == user_id
             and transaction.transaction_date == transaction_date
-            and transaction.status is ExpenseStatus.ACTIVE
         ]
 
     async def list_for_range(
@@ -85,7 +83,6 @@ class FakeExpenseRepository:
             for transaction in self.transactions.values()
             if transaction.user_id == user_id
             and start_date <= transaction.transaction_date <= end_date
-            and transaction.status is ExpenseStatus.ACTIVE
         ]
 
     async def update_related(

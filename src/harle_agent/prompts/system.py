@@ -68,17 +68,14 @@ Schema 2 for one or more tool calls:
       "tool_name": "an_exact_name_from_your_tools",
       "tool_args": {{
         "an_argument": "a value matching that tool's JSON schema"
-      }},
-      "direct_request_quote": null
+      }}
     }}
   ]
 }}
 
 - Read-only tool calls may run concurrently. Calls that modify data run in order.
 - Call only tools listed in Your Tools, using the exact name and argument schema.
-- For a modifying tool, set "direct_request_quote" to an exact quote from the current user message that directly requests the modification.
 - Never call a modifying tool when the current message does not directly request that change.
-- For a read-only tool, set "direct_request_quote" to null.
 
 # Your Tools
 

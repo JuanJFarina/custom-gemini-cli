@@ -23,15 +23,15 @@ Exposing the current implementation to multiple users could mix personal context
 ## First-Version Request Flow
 
 1. Telegram calls the FastAPI webhook.
-2. FastAPI validates the webhook secret and deduplicates the Telegram `update_id`.
-3. FastAPI maps the Telegram user ID to an internal user.
-4. FastAPI checks the user's temporary safety-ban state.
-5. FastAPI validates subscription status, plan, current-month usage, and in-flight usage.
-6. FastAPI builds a request-scoped user runtime.
-7. Harle loads only that user's context and authorized tools.
-8. Harle generates a response and executes authorized actions.
-9. The successful conversation and tool interactions are persisted under the internal user ID.
-10. FastAPI sends the response through Telegram.
+2. FastAPI validates the webhook secret and persists or deduplicates the Telegram `update_id`.
+3. FastAPI checks the Telegram identity's process-local safety-ban state for every new update.
+4. The message coordinator joins or queues the update for that Telegram identity.
+5. FastAPI maps the Telegram user ID to an internal user for the resulting turn.
+6. FastAPI validates subscription status, plan, current-month usage, and in-flight usage.
+7. FastAPI builds a request-scoped user runtime.
+8. Harle loads only that user's context and likely authorized tool families.
+9. Harle generates a response and executes model-selected actions.
+10. FastAPI sends the response through Telegram and persists the completed conversation and update state.
 
 The pre-flight policy should be encapsulated behind a clear service boundary so it can be extracted into a proxy or gateway in a later architecture version.
 
@@ -104,6 +104,8 @@ The first version supports passive, one-time events. Recurrence, attendees, remi
 **Current:** Any modifying tool call selected by the model executes immediately.
 
 **Required:** Distinguish direct user requests from inferred modifications. Persist inferred writes as expiring proposed actions and audit every executed change, including internal expenses, internal events, and Juan's legacy Google Sheets changes.
+
+The reduced controlled beta defers this runtime gate, proposed-action persistence, and action auditing. Harle may execute a modifying tool when it interprets the current user prompt as requesting the operation.
 
 ### Telegram Idempotency and Ordering
 
@@ -281,8 +283,7 @@ Before implementation, define whether internal expenses and events remain the so
 
 ## Explicitly Deferred From the First Version
 
-- Multi-message turn aggregation or response cancellation
-- Relevance-based tool selection beyond the required per-user authorization filtering
+- Model-based tool relevance ranking beyond the reduced release's explicit keyword filtering
 - Proactive scheduling and autonomous check-ins
 - Custom reminders and reminder delivery
 - Multi-user Google Sheets integration and synchronization
@@ -295,7 +296,7 @@ Before implementation, define whether internal expenses and events remain the so
 
 The first version preserves the current immediate one-message, one-response behavior because Harle's 2–3 second latency is a product advantage.
 
-## Definition of Releasable
+## Definition of Broad-Launch Releasable
 
 - Two users cannot read or modify each other's conversations, profiles, memories, internal expenses, or internal events.
 - An unknown, inactive, or unsubscribed Telegram identity never invokes Gemini or any integration.

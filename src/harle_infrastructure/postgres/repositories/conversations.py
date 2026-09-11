@@ -1,4 +1,5 @@
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
@@ -94,35 +95,76 @@ class PostgresConversationRepository:
         *,
         user_id: UUID,
         telegram_chat_id: int,
-        telegram_update_id: int | None,
+        telegram_update_ids: Sequence[int],
         conversation: _ConversationWrite,
     ) -> None:
+        update_ids = _validate_update_ids(telegram_update_ids)
+        primary_update_id = update_ids[0] if update_ids else None
         async with self.pool.acquire() as connection:
-            await connection.execute(
-                """
-                INSERT INTO conversations (
-                    user_id, telegram_chat_id, prompt, response,
-                    model, kind, telegram_update_id, status, completed_at
+            async with connection.transaction():
+                conversation_id = await connection.fetchval(
+                    """
+                    INSERT INTO conversations (
+                        user_id, telegram_chat_id, prompt, response,
+                        model, kind, telegram_update_id, status, completed_at
+                    )
+                    VALUES (
+                        $1, $2, $3, $4, $5, 'conversation', $6, 'completed', NOW()
+                    )
+                    ON CONFLICT DO NOTHING
+                    RETURNING id
+                    """,
+                    user_id,
+                    telegram_chat_id,
+                    conversation.prompt,
+                    conversation.response_text,
+                    conversation.model,
+                    primary_update_id,
                 )
-                VALUES (
-                    $1, $2, $3, $4, $5, 'conversation', $6, 'completed', NOW()
-                )
-                ON CONFLICT DO NOTHING
-                """,
-                user_id,
-                telegram_chat_id,
-                conversation.prompt,
-                conversation.response_text,
-                conversation.model,
-                telegram_update_id,
-            )
+                if conversation_id is None and primary_update_id is not None:
+                    conversation_id = await connection.fetchval(
+                        """
+                        SELECT id
+                        FROM conversations
+                        WHERE telegram_update_id = $1
+                            AND kind = 'conversation'
+                        """,
+                        primary_update_id,
+                    )
+                if isinstance(conversation_id, bool) or not isinstance(
+                    conversation_id,
+                    int,
+                ):
+                    raise RuntimeError("Could not persist the delivered conversation.")
+                if update_ids:
+                    rows = await connection.fetch(
+                        """
+                        UPDATE telegram_update_claims
+                        SET status = 'delivered',
+                            conversation_id = $2,
+                            delivered_at = NOW(),
+                            updated_at = NOW()
+                        WHERE update_id = ANY($1::bigint[])
+                            AND (
+                                status <> 'delivered'
+                                OR conversation_id = $2
+                            )
+                        RETURNING update_id
+                        """,
+                        update_ids,
+                        conversation_id,
+                    )
+                    delivered_ids = {_integer(row, "update_id") for row in rows}
+                    if delivered_ids != set(update_ids):
+                        raise RuntimeError(
+                            "Could not associate every update with the conversation.",
+                        )
 
     async def save_tool_call(
         self,
         *,
         user_id: UUID,
         telegram_chat_id: int,
-        telegram_update_id: int | None,
         tool_call: _ToolCallWrite,
     ) -> None:
         if (
@@ -136,12 +178,12 @@ class PostgresConversationRepository:
                 INSERT INTO conversations (
                     user_id, telegram_chat_id, prompt, response, model,
                     kind, tool_call_response, tool_result,
-                    telegram_update_id, tool_interaction_index,
+                    tool_interaction_index,
                     status, completed_at
                 )
                 VALUES (
                     $1, $2, '', '', $3, 'tool_call', $4::jsonb, $5::jsonb,
-                    $6, $7, 'completed', NOW()
+                    $6, 'completed', NOW()
                 )
                 ON CONFLICT DO NOTHING
                 """,
@@ -155,7 +197,6 @@ class PostgresConversationRepository:
                         for result in tool_call.interaction.tool_results
                     ],
                 ),
-                telegram_update_id,
                 tool_call.interaction_index,
             )
 
@@ -165,18 +206,11 @@ class PostgresConversationStore:
     repository: PostgresConversationRepository
     user_id: UUID
     telegram_chat_id: int
-    telegram_update_id: int | None = None
     max_tokens: int = DEFAULT_CONVERSATION_TOKENS
 
     def __post_init__(self) -> None:
         if self.max_tokens <= 0:
             raise ValueError("Conversation token limit must be positive.")
-        if (
-            isinstance(self.telegram_update_id, bool)
-            or self.telegram_update_id is not None
-            and self.telegram_update_id < 0
-        ):
-            raise ValueError("Telegram update identifier must be non-negative.")
 
     async def load(self) -> str:
         return await self.repository.load(
@@ -191,11 +225,12 @@ class PostgresConversationStore:
         prompt: str,
         response_text: str,
         model: str,
+        telegram_update_ids: Sequence[int] = (),
     ) -> None:
         await self.repository.save(
             user_id=self.user_id,
             telegram_chat_id=self.telegram_chat_id,
-            telegram_update_id=self.telegram_update_id,
+            telegram_update_ids=telegram_update_ids,
             conversation=_ConversationWrite(
                 prompt=prompt,
                 response_text=response_text,
@@ -213,7 +248,6 @@ class PostgresConversationStore:
         await self.repository.save_tool_call(
             user_id=self.user_id,
             telegram_chat_id=self.telegram_chat_id,
-            telegram_update_id=self.telegram_update_id,
             tool_call=_ToolCallWrite(
                 interaction=interaction,
                 interaction_index=interaction_index,
@@ -320,3 +354,19 @@ def _validate_utc_period(created_from: datetime, created_before: datetime) -> No
         raise ValueError("Conversation usage end must use UTC.")
     if created_before <= created_from:
         raise ValueError("Conversation usage end must follow its start.")
+
+
+def _validate_update_ids(update_ids: Sequence[int]) -> list[int]:
+    identifiers = list(update_ids)
+    if len(identifiers) != len(set(identifiers)):
+        raise ValueError("Telegram update identifiers must be unique.")
+    if any(isinstance(update_id, bool) or update_id < 0 for update_id in identifiers):
+        raise ValueError("Telegram update identifiers must be non-negative.")
+    return identifiers
+
+
+def _integer(row: asyncpg.Record, key: str) -> int:
+    value: object = row[key]
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise TypeError(f"Expected {key} to be an integer.")
+    return value

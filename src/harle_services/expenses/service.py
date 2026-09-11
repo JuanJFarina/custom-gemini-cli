@@ -11,7 +11,6 @@ from harle_domain.expenses import (
     ExpenseEntryType,
     ExpenseInstallment,
     ExpenseRepository,
-    ExpenseStatus,
     ExpenseSummary,
     ExpenseTimestamps,
     ExpenseTransaction,
@@ -243,7 +242,6 @@ def _new_transaction(
             category=expense.category,
             transaction_date=transaction_date,
             description=expense.description.strip(),
-            status=ExpenseStatus.ACTIVE,
         ),
         installment=installment,
         timestamps=ExpenseTimestamps(

@@ -26,7 +26,6 @@ class ToolEffect(str, Enum):
 class ToolCall(BaseModel):
     tool_name: str = Field(min_length=1)
     tool_args: Mapping[str, object]
-    direct_request_quote: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
