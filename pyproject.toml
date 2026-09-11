@@ -26,6 +26,7 @@ dev = [
     "mypy",
     "pre-commit",
     "pylint",
+    "pytest",
     "ruff",
 ]
 
@@ -34,6 +35,15 @@ gemini = "harle_cli.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = [
+    "harle_agent*",
+    "harle_api*",
+    "harle_cli*",
+    "harle_domain*",
+    "harle_infrastructure*",
+    "harle_services*",
+    "harle_utils*",
+]
 
 [tool.ruff]
 line-length = 88
@@ -60,9 +70,16 @@ packages = [
     "harle_agent",
     "harle_api",
     "harle_cli",
+    "harle_domain",
+    "harle_infrastructure",
+    "harle_services",
+    "harle_utils",
 ]
 python_version = "3.10"
 warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [[tool.mypy.overrides]]
 module = [
