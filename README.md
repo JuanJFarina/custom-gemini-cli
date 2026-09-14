@@ -1,6 +1,14 @@
-# Custom Gemini CLI
+# Harle
 
-Minimal CLI for sending one-shot prompts to Gemini with Google Search grounding enabled.
+Harle is a Telegram-first, multi-user AI personal assistant with a local development CLI.
+
+Product direction and current work are defined in:
+
+- [Vision](docs/01_VISION.md)
+- [Features](docs/02_FEATURES.md)
+- [Software Requirements Specification](docs/03_SRS.md)
+- [Project Management Plan](docs/04_PMP.md)
+- [Entity Relationship Diagram](docs/05_ERD.md)
 
 ## Setup
 
@@ -58,11 +66,11 @@ Use another model:
 gemini --model gemini-2.5-pro "summarize today's AI news"
 ```
 
-## Expense updates
+## Legacy Google Sheets expenses
 
-The assistant can update Juan's Google Sheets expense tracker when Google Sheets credentials are configured. This works from both the CLI and Telegram bot because both entry points use the same assistant engine.
+Harle can update Juan's private Google Sheets expense tracker when the legacy integration is configured. Telegram access is granted only when the resolved internal user UUID equals `LEGACY_GOOGLE_SHEETS_USER_ID`. The CLI requires that UUID through `--user-id`.
 
-The first supported tool is for non-credit payments only. It updates the category cell for a given day/month by appending to the existing formula:
+The integration supports one-time expenses and refunds, installment purchases, daily and monthly queries, and transaction corrections. Writes update the configured category cells by changing the existing formula:
 
 ```text
 =100 -> =100+200 for a normal expense
@@ -72,7 +80,9 @@ The first supported tool is for non-credit payments only. It updates the categor
 Required Google Sheets environment variables:
 
 ```env
+LEGACY_GOOGLE_SHEETS_USER_ID=juan_internal_user_uuid_here
 EXPENSES_SPREADSHEET_ID=your_expenses_spreadsheet_id_here
+EXPENSES_NEXT_YEAR_SPREADSHEET_ID=your_next_year_expenses_spreadsheet_id_here
 GOOGLE_SERVICE_ACCOUNT_JSON_BASE64=base64_encoded_service_account_json_here
 ```
 
@@ -116,7 +126,7 @@ python -m pip install -r requirements.txt
 Run locally:
 
 ```powershell
-uvicorn harle_api.app:app --reload
+uvicorn harle_api.app:harle_app --reload
 ```
 
 Health check:
@@ -135,7 +145,9 @@ TELEGRAM_WEBHOOK_SECRET=your_random_webhook_secret_here
 POSTGRES_DATABASE_URL=postgresql://user:password@host:5432/database?sslmode=require
 POSTGRES_POOL_MIN_SIZE=1
 POSTGRES_POOL_MAX_SIZE=5
+LEGACY_GOOGLE_SHEETS_USER_ID=juan_internal_user_uuid_here
 EXPENSES_SPREADSHEET_ID=your_expenses_spreadsheet_id_here
+EXPENSES_NEXT_YEAR_SPREADSHEET_ID=your_next_year_expenses_spreadsheet_id_here
 GOOGLE_SERVICE_ACCOUNT_JSON_BASE64=base64_encoded_service_account_json_here
 ```
 
@@ -180,7 +192,7 @@ Render Web Service settings:
 
 ```text
 Build command: python -m pip install -r requirements.txt
-Start command: uvicorn harle_api.app:app --host 0.0.0.0 --port $PORT
+Start command: uvicorn harle_api.app:harle_app --host 0.0.0.0 --port $PORT
 Health check path: /healthcheck
 ```
 
@@ -189,5 +201,3 @@ Health check path: /healthcheck
 FastAPI validates the schema at startup but never creates or alters it. Each webhook resolves the Telegram sender to an active internal user and builds an isolated request runtime from that user's PostgreSQL profile and conversation data.
 
 The CLI remains a local development interface with file-backed conversations. SQLite remains available only as a non-commercial compatibility adapter.
-
-Do not expose this intermediate workload to multiple real users until `03-tool-registry-sheets-isolation` is implemented. The current global Google Sheets tools are not yet isolated by internal user UUID.
