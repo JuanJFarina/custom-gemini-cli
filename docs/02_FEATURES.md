@@ -50,11 +50,15 @@
 
 ## Possible Later Features
 
-- **Autonomous action scheduler**: Harle may run scheduled background thoughts or checks that wake eligible agents at bounded intervals and create useful follow-ups without requiring a new user message.
+- **Event kinds**: Internal events may become `user_event` records for the user's real-life agenda or `system_event` records for internal agent reminders and tasks.
+- **Event notification state**: Every event should have a `notification_window_start` and a `notified` boolean. System events should default their notification window to 15 minutes before the event starts.
+- **Agents scheduler**: An `AgentsScheduler` service should check every five minutes for scheduled, unnotified events whose notification window has started but whose event has not started, then wake the owning user's agent to react.
 - **Proactive check-ins**: Harle may follow up on tasks, situations, habits, or emotional context when the user enables it and notification preferences allow it.
 - **External context injectors**: Harle may use cached or polled context providers for data such as weather, location, reminders, calendars, or other user-authorized topics.
 - **Durable background queues**: Harle may use durable queues for scheduled agent wakeups, outbound messages, proposed actions, and integration polling when reliability requires it.
-- **Multi-user Google integrations**: Users may connect Google Sheets or Google Calendar through OAuth with encrypted, revocable credentials after source-of-truth and synchronization rules are defined.
+- **Google import and synchronization**: An authorized agent tool may invoke a controlled migration or synchronization service that imports Google Sheets expenses and Google Calendar events into Harle's internal systems.
+- **Multi-user Google integrations**: Users may connect Google Sheets or Google Calendar through OAuth with encrypted, revocable credentials after source-of-truth, import, and synchronization rules are defined.
+- **Multimodal Telegram input**: Harle should understand images and voice notes sent through Telegram and use them as context for conversation and authorized tools.
 - **WhatsApp integration**: Harle should eventually support WhatsApp because of its broader market reach.
 - **Additional communication channels**: Harle may later support voice, email, or native mobile surfaces if they improve everyday access.
 - **Broader personal integrations**: Harle may integrate with email, notes, documents, task managers, banking exports, health data, or other services that help manage the user's life.

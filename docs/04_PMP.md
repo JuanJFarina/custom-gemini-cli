@@ -94,7 +94,12 @@ Exit criteria:
 Goals:
 
 - Add user-controlled memory and profile inspection, correction, refinement, and deletion.
-- Add reminders, notification preferences, quiet periods, and bounded proactive check-ins.
+- Extend internal events with `user_event` and `system_event` types, `notification_window_start`, and a `notified` boolean.
+- Default system-event notification windows to 15 minutes before event start.
+- Add an `AgentsScheduler` that runs every five minutes, wakes the owning user's agent for eligible unnotified events, and marks them notified after successful delivery.
+- Add notification preferences, quiet periods, and bounded proactive check-ins.
+- Add image and voice-note input through Telegram.
+- Add an authorized agent tool that invokes a controlled Google expense and calendar import or synchronization service.
 - Add multi-user Google Sheets and Google Calendar through least-privilege OAuth.
 - Define source-of-truth, synchronization, conflict, and revocation behavior before connecting internal and Google data.
 - Consider WhatsApp, broader integrations, customization UI, and model routing only after the first commercial architecture is proven.
@@ -104,6 +109,8 @@ Exit criteria:
 - Each capability has explicit product policy, user ownership, authorization, privacy, and delivery behavior before implementation.
 - New integrations do not expose another user's credentials or data.
 - Proactive behavior remains opt-in and preserves user agency.
+- The scheduler evaluates only scheduled events inside their notification window and does not notify an event already marked `notified`.
+- Images, voice notes, imported records, and scheduled event context remain isolated to the owning user.
 
 ## Infrastructure and Cost
 
@@ -133,5 +140,8 @@ Exit criteria:
 - Whether Juan may move from legacy Sheets to internal expenses and how existing data would be handled
 - Memory consent and automatic learning policy
 - Reminder recurrence, notification preferences, and quiet periods
+- Behavior when scheduler downtime causes an event notification window to be missed
+- System-event creation permissions and supported task payloads
+- Image and voice-note size, retention, transcription, and unsupported-media behavior
 - Internal versus Google source-of-truth and synchronization rules
 - Exact service-level targets, metrics, and alert thresholds

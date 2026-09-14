@@ -139,6 +139,14 @@ This document distinguishes the implemented controlled-beta baseline from target
 - **FR-46**: Harle shall create, update, cancel, or permanently delete only events owned by the requesting user and only when the current message directly requests the modification.
 - **FR-47**: Events shall support timed and all-day schedules, preserve the originating IANA timezone, store UTC boundaries, and require the end to follow the start.
 - **FR-48**: Controlled-beta events shall create no recurrence, attendees, reminders, notifications, external synchronization, or background work. Later reminder or calendar integrations shall be user-scoped, revocable, and governed by the target authorization policy.
+- **FR-80**: Future internal events shall have type `user_event` or `system_event`. User events represent the user's real-life agenda; system events represent internal reminders or tasks for the agent.
+- **FR-81**: Every future event shall have `notification_window_start` and `notified`. User events shall use their configured notification window; system events shall default it to 15 minutes before `starts_at`.
+- **FR-82**: A future `AgentsScheduler` shall run every five minutes and select scheduled events where `notified` is false, `notification_window_start` is at or before the current time, and `starts_at` is after the current time.
+- **FR-83**: The scheduler shall wake the owning user's request-scoped agent for every selected event. The agent shall treat user events as agenda context and system events as user-owned scheduled task context.
+- **FR-84**: An event shall be marked `notified` only after its notification is sent successfully. Changing its start or notification window shall reset `notified` to false.
+- **FR-85**: Harle shall accept images and voice notes from Telegram as multimodal conversation input and make their interpreted content available to the user-scoped agent.
+- **FR-86**: A future authorized agent tool may invoke a controlled migration or synchronization service to import Google Sheets expenses and Google Calendar events into the internal expense and event systems.
+- **FR-87**: WhatsApp may be added as a later communication channel after the Telegram product and channel-independent runtime boundaries are stable.
 
 ### Companionship and Safety
 
@@ -196,7 +204,7 @@ Harle is conceptually divided into these program areas:
 - **Context providers**: Provide current date, time, and weather from user-specific timezone and location inputs.
 - **Tool system**: Defines tool families, effects, argument contracts, authorization, prompt relevance, request-scoped handlers, and structured results.
 - **Preflight services**: Resolve identity and subscription, apply temporary bans, and reserve monthly quota before assistant execution.
-- **Future runtime services**: Proposed-action, audit, durable delivery, reminder, scheduler, privacy, and subscription-synchronization services remain pending.
+- **Future runtime services**: Proposed-action, audit, durable delivery, `AgentsScheduler`, event notification, privacy, subscription-synchronization, Google import, and multimodal-input services remain pending.
 - **External integrations**: Connects to AI providers, Telegram, PostgreSQL, Google Sheets, future productivity services, weather data, and external account or subscription systems.
 
 The implemented controlled-beta message flow is:
@@ -214,13 +222,13 @@ The implemented controlled-beta message flow is:
 
 The future scheduled-agent flow is:
 
-1. The scheduler wakes at a configured interval.
-2. The scheduler selects eligible user agents according to opt-in state, quiet periods, rate limits, reminder due dates, and randomization or priority rules.
-3. The runtime builds the same user-scoped stores, context providers, and tool configuration used for normal requests.
-4. Harle loads relevant context and decides whether a follow-up, reminder, proposed action, or no-op is appropriate.
-5. Harle sends an outbound message only when allowed by user preferences and platform limits.
-6. Any modification not directly requested by the user becomes a proposed action requiring user authorization.
-7. The system persists the scheduled run, decision, outbound message, proposed action, or no-op result.
+1. `AgentsScheduler` runs every five minutes.
+2. It selects scheduled, unnotified events whose notification window has started and whose event start remains in the future.
+3. The runtime builds the owning user's request-scoped stores, context providers, and tool configuration.
+4. Harle receives each event as agenda context for a user event or scheduled task context for a system event.
+5. Harle sends an outbound notification only when allowed by user preferences and platform limits.
+6. The event is marked notified after successful delivery.
+7. Any additional modification not directly authorized by the user becomes a proposed action.
 
 ## Machine
 
