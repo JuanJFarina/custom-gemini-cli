@@ -54,7 +54,7 @@ class EventRepository(Protocol):
         cancelled_at: datetime,
     ) -> InternalEvent | None: ...
 
-    async def mark_notified(
+    async def mark_notification_delivered(
         self,
         *,
         user_id: UUID,

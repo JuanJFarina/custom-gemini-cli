@@ -93,9 +93,9 @@ Exit criteria:
 
 Implemented baseline:
 
-- Internal events have `user_event` and `system_event` types, `notification_window_start`, and a `notified` boolean.
-- Both event types default to a 15-minute notification lead, which can be changed per event.
-- A process-local `AgentsScheduler` runs every five minutes, wakes the owning active user's agent without modifying tools or consuming conversation quota, and marks events notified after successful Telegram delivery.
+- Internal events have `user_event` and `system_event` types, `notification_window_start`, and `notification_status` with `disabled`, `pending`, and `delivered` states.
+- Both event types enable notifications by default with a 15-minute lead. Users can disable or re-enable notifications, set a positive custom lead, or use zero to restore the default.
+- A process-local `AgentsScheduler` runs every five minutes, wakes the owning active user's agent for pending events without modifying tools or consuming conversation quota, and marks notifications delivered after successful Telegram delivery.
 
 Remaining goals:
 

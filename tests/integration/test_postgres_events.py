@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 import asyncpg
 import pytest
 
-from harle_domain.events import EventStatus
+from harle_domain.events import EventStatus, NotificationStatus
 from harle_infrastructure.postgres import (
     PostgresEventRepository,
     create_postgres_pool,
@@ -93,6 +93,19 @@ async def verify_event_isolation(database_url: str) -> None:
                 ),
             ),
         )
+        await service.create(
+            user_id=first_id,
+            event=CreateEvent(
+                title="Disabled event",
+                description="No notification",
+                schedule=TimedEventSchedule(
+                    starts_at=datetime(2026, 9, 1, 10),
+                    ends_at=datetime(2026, 9, 1, 11),
+                    timezone_name="UTC",
+                ),
+                notifications_enabled=False,
+            ),
+        )
         due_service = EventService(
             PostgresEventRepository(pool),
             clock=lambda: datetime(
@@ -106,8 +119,9 @@ async def verify_event_isolation(database_url: str) -> None:
         )
         due_events = await due_service.list_due_for_notification()
         assert [event.id for event in due_events] == [first.id]
-        notified = await due_service.mark_notified(event=first)
-        assert notified is not None and notified.notified
+        delivered = await due_service.mark_notification_delivered(event=first)
+        assert delivered is not None
+        assert delivered.notification_status is NotificationStatus.DELIVERED
 
         first_events = await service.list_for_range(
             user_id=first_id,
@@ -146,7 +160,7 @@ async def verify_event_isolation(database_url: str) -> None:
         )
         assert updated is not None
         assert updated.title == "Updated first event"
-        assert updated.notified
+        assert updated.notification_status is NotificationStatus.DELIVERED
         rescheduled = await due_service.update(
             user_id=first_id,
             event_id=first.id,
@@ -158,7 +172,8 @@ async def verify_event_isolation(database_url: str) -> None:
                 ),
             ),
         )
-        assert rescheduled is not None and not rescheduled.notified
+        assert rescheduled is not None
+        assert rescheduled.notification_status is NotificationStatus.PENDING
         cancelled = await due_service.cancel(user_id=first_id, event_id=first.id)
         assert cancelled is not None
         assert cancelled.status is EventStatus.CANCELLED

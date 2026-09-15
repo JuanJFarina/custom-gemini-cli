@@ -13,6 +13,7 @@ from harle_domain.events import (
     EventTimestamps,
     EventType,
     InternalEvent,
+    NotificationStatus,
 )
 
 EVENT_COLUMNS = """
@@ -27,7 +28,7 @@ EVENT_COLUMNS = """
     event_type,
     status,
     notification_window_start,
-    notified,
+    notification_status,
     created_at,
     updated_at,
     cancelled_at
@@ -62,7 +63,7 @@ class PostgresEventRepository:
                     event_type,
                     status,
                     notification_window_start,
-                    notified,
+                    notification_status,
                     created_at,
                     updated_at,
                     cancelled_at
@@ -84,7 +85,7 @@ class PostgresEventRepository:
                 event.event_type.value,
                 event.status.value,
                 event.notification_window_start,
-                event.notified,
+                event.notification_status.value,
                 event.created_at,
                 event.updated_at,
                 event.cancelled_at,
@@ -165,7 +166,7 @@ class PostgresEventRepository:
                 SELECT {EVENT_COLUMNS}
                 FROM internal_events
                 WHERE status = 'scheduled'
-                    AND notified = FALSE
+                    AND notification_status = 'pending'
                     AND notification_window_start <= $1
                     AND starts_at > $1
                 ORDER BY notification_window_start, starts_at, id
@@ -197,7 +198,7 @@ class PostgresEventRepository:
                     all_day = $8,
                     event_type = $9,
                     notification_window_start = $10,
-                    notified = $11,
+                    notification_status = $11,
                     updated_at = $12
                 WHERE id = $1
                     AND user_id = $2
@@ -214,12 +215,12 @@ class PostgresEventRepository:
                 event.all_day,
                 event.event_type.value,
                 event.notification_window_start,
-                event.notified,
+                event.notification_status.value,
                 event.updated_at,
             )
         return _event_from_row(row) if row is not None else None
 
-    async def mark_notified(
+    async def mark_notification_delivered(
         self,
         *,
         user_id: UUID,
@@ -231,12 +232,12 @@ class PostgresEventRepository:
             row = await connection.fetchrow(
                 f"""
                 UPDATE internal_events
-                SET notified = TRUE,
+                SET notification_status = 'delivered',
                     updated_at = $4
                 WHERE id = $1
                     AND user_id = $2
                     AND status = 'scheduled'
-                    AND notified = FALSE
+                    AND notification_status = 'pending'
                     AND updated_at = $3
                 RETURNING {EVENT_COLUMNS}
                 """,
@@ -311,7 +312,7 @@ def _event_from_row(row: asyncpg.Record) -> InternalEvent:
         ),
         notification=EventNotification(
             window_start=_datetime(row, "notification_window_start"),
-            notified=_boolean(row, "notified"),
+            status=NotificationStatus(_text(row, "notification_status")),
         ),
         timestamps=EventTimestamps(
             created_at=_datetime(row, "created_at"),

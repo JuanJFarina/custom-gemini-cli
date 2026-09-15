@@ -19,7 +19,7 @@ class FakeEvents:
     async def list_due_for_notification(self) -> list[InternalEvent]:
         return [event for event in self.events if event.id not in self.marked]
 
-    async def mark_notified(
+    async def mark_notification_delivered(
         self,
         *,
         event: InternalEvent,

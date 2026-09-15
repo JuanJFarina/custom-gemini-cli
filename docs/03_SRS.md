@@ -32,7 +32,7 @@ This document distinguishes the implemented controlled-beta baseline from target
 - Tool authorization gives commercial users internal expenses and events. Juan receives internal events and legacy Google Sheets expenses instead of internal expenses.
 - Commercial expenses use Argentine pesos, fixed categories, permanent deletion, and transaction UUIDs. Updating or deleting one installment affects its complete installment group.
 - Internal events are private, one-time timed or all-day `user_event` or `system_event` records. Cancellation retains an event; deletion is permanent.
-- Every event has a notification window and delivery state. A process-local scheduler wakes the owning active user's agent every five minutes for eligible events and marks the event notified after successful Telegram delivery.
+- Every event has a notification window and status `disabled`, `pending`, or `delivered`. A process-local scheduler wakes the owning active user's agent every five minutes for pending events and marks the notification delivered after successful Telegram delivery.
 - Telegram updates are persisted and deduplicated before assistant execution. Consecutive messages may join a turn until tool execution or delivery begins.
 - The tenth valid message within two seconds triggers a per-identity cooldown. Cooldowns escalate from 60 seconds to 5 minutes and then 1 hour, and strikes decay after normal use.
 - Monthly quotas count successful completed conversations within UTC month boundaries and include process-local in-flight reservations. Configured plan limits, rather than application constants, determine allowance.
@@ -141,10 +141,10 @@ This document distinguishes the implemented controlled-beta baseline from target
 - **FR-47**: Events shall support timed and all-day schedules, preserve the originating IANA timezone, store UTC boundaries, and require the end to follow the start.
 - **FR-48**: Controlled-beta events shall create no recurrence, attendees, external synchronization, quiet-period behavior, or durable background work. Later reminder or calendar integrations shall be user-scoped, revocable, and governed by the target authorization policy.
 - **FR-80**: Internal events shall have type `user_event` or `system_event`. User events represent the user's real-life agenda; system events represent internal reminders or tasks for the agent.
-- **FR-81**: Every event shall have `notification_window_start` and `notified`. Both event types shall default to a notification window 15 minutes before `starts_at`, and users may configure a non-negative lead.
-- **FR-82**: A process-local `AgentsScheduler` shall run every five minutes and select scheduled events where `notified` is false, `notification_window_start` is at or before the current time, and `starts_at` is after the current time.
+- **FR-81**: Every event shall have `notification_window_start` and `notification_status`, whose allowed values are `disabled`, `pending`, and `delivered`. Both event types shall enable notifications by default with a 15-minute lead, zero shall select that default, and positive values shall configure a custom lead.
+- **FR-82**: A process-local `AgentsScheduler` shall run every five minutes and select scheduled events where `notification_status` is `pending`, `notification_window_start` is at or before the current time, and `starts_at` is after the current time.
 - **FR-83**: The scheduler shall wake the owning user's request-scoped agent for every selected event. The agent shall treat user events as agenda context and system events as user-owned scheduled task context.
-- **FR-84**: An event shall be marked `notified` only after its notification is sent successfully. Changing its start or notification window shall reset `notified` to false.
+- **FR-84**: A pending event shall become `delivered` only after its notification is sent successfully. Disabling notifications shall set `disabled`; re-enabling shall set `pending`; rescheduling an enabled event shall set `pending`; and rescheduling a disabled event shall preserve `disabled`.
 - **FR-85**: Harle shall accept images and voice notes from Telegram as multimodal conversation input and make their interpreted content available to the user-scoped agent.
 - **FR-86**: A future authorized agent tool may invoke a controlled migration or synchronization service to import Google Sheets expenses and Google Calendar events into the internal expense and event systems.
 - **FR-87**: WhatsApp may be added as a later communication channel after the Telegram product and channel-independent runtime boundaries are stable.
@@ -225,12 +225,12 @@ The implemented controlled-beta message flow is:
 The implemented scheduled-event flow is:
 
 1. `AgentsScheduler` runs every five minutes.
-2. It selects scheduled, unnotified events whose notification window has started and whose event start remains in the future.
+2. It selects scheduled, pending events whose notification window has started and whose event start remains in the future.
 3. The runtime resolves the owning active user's Telegram identity and builds the user's request-scoped stores and context providers.
 4. Harle receives each event as agenda context for a user event or scheduled task context for a system event.
 5. Harle generates a concise notification without modifying tools or a monthly quota reservation.
 6. Harle sends the notification to the user's private Telegram chat.
-7. The event is marked notified after successful delivery. Failed delivery remains eligible until the event starts.
+7. The notification becomes delivered after successful delivery. Failed delivery remains pending and eligible until the event starts.
 
 ## Machine
 

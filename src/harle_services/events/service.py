@@ -12,6 +12,7 @@ from harle_domain.events import (
     EventTimestamps,
     EventType,
     InternalEvent,
+    NotificationStatus,
     all_day_event_interval,
     event_range,
     timed_event_interval,
@@ -63,6 +64,7 @@ class CreateEvent:
     schedule: EventSchedule
     event_type: EventType = EventType.USER_EVENT
     notify_before: timedelta = DEFAULT_NOTIFICATION_LEAD
+    notifications_enabled: bool = True
 
     def __post_init__(self) -> None:
         if not self.title.strip():
@@ -77,15 +79,18 @@ class UpdateEvent:
     schedule: EventSchedule | None = None
     event_type: EventType | None = None
     notify_before: timedelta | None = None
+    notifications_enabled: bool | None = None
 
     def __post_init__(self) -> None:
-        if (
-            self.title is None
-            and self.description is None
-            and self.schedule is None
-            and self.event_type is None
-            and self.notify_before is None
-        ):
+        changes = (
+            self.title,
+            self.description,
+            self.schedule,
+            self.event_type,
+            self.notify_before,
+            self.notifications_enabled,
+        )
+        if all(change is None for change in changes):
             raise ValueError("At least one event change is required.")
         if self.title is not None and not self.title.strip():
             raise ValueError("Event title cannot be empty.")
@@ -132,6 +137,7 @@ class EventService:
     ) -> InternalEvent:
         now = self._now()
         interval = event.schedule.to_interval()
+        notification_lead = _normalize_notification_lead(event.notify_before)
         created = InternalEvent(
             id=uuid4(),
             user_id=user_id,
@@ -143,8 +149,12 @@ class EventService:
                 status=EventStatus.SCHEDULED,
             ),
             notification=EventNotification(
-                window_start=interval.starts_at - event.notify_before,
-                notified=False,
+                window_start=interval.starts_at - notification_lead,
+                status=(
+                    NotificationStatus.PENDING
+                    if event.notifications_enabled
+                    else NotificationStatus.DISABLED
+                ),
             ),
             timestamps=EventTimestamps(
                 created_at=now,
@@ -172,7 +182,7 @@ class EventService:
             else current.details.interval
         )
         notification_lead = (
-            changes.notify_before
+            _normalize_notification_lead(changes.notify_before)
             if changes.notify_before is not None
             else current.starts_at - current.notification_window_start
         )
@@ -201,7 +211,11 @@ class EventService:
             notification=replace(
                 current.notification,
                 window_start=notification_window_start,
-                notified=False if notification_changed else current.notified,
+                status=_updated_notification_status(
+                    current.notification_status,
+                    notifications_enabled=changes.notifications_enabled,
+                    notification_changed=notification_changed,
+                ),
             ),
             timestamps=replace(current.timestamps, updated_at=self._now()),
         )
@@ -219,12 +233,12 @@ class EventService:
             limit=limit,
         )
 
-    async def mark_notified(
+    async def mark_notification_delivered(
         self,
         *,
         event: InternalEvent,
     ) -> InternalEvent | None:
-        return await self.repository.mark_notified(
+        return await self.repository.mark_notification_delivered(
             user_id=event.user_id,
             event_id=event.id,
             expected_updated_at=event.updated_at,
@@ -264,3 +278,27 @@ class EventService:
 def _require_notification_lead(value: timedelta) -> None:
     if value < timedelta(0):
         raise ValueError("Event notification lead cannot be negative.")
+
+
+def _normalize_notification_lead(value: timedelta) -> timedelta:
+    _require_notification_lead(value)
+    return DEFAULT_NOTIFICATION_LEAD if value == timedelta(0) else value
+
+
+def _updated_notification_status(
+    current: NotificationStatus,
+    *,
+    notifications_enabled: bool | None,
+    notification_changed: bool,
+) -> NotificationStatus:
+    if notifications_enabled is False:
+        return NotificationStatus.DISABLED
+    if current is NotificationStatus.DISABLED:
+        return (
+            NotificationStatus.PENDING
+            if notifications_enabled
+            else NotificationStatus.DISABLED
+        )
+    if notification_changed:
+        return NotificationStatus.PENDING
+    return current

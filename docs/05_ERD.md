@@ -123,7 +123,7 @@ erDiagram
         TEXT event_type
         TEXT status
         TIMESTAMPTZ notification_window_start
-        BOOLEAN notified
+        TEXT notification_status
         TIMESTAMPTZ created_at
         TIMESTAMPTZ updated_at
         TIMESTAMPTZ cancelled_at
@@ -175,8 +175,8 @@ erDiagram
 - Event type is `user_event` for the user's agenda or `system_event` for an internal assistant reminder or task.
 - Start and end are stored in UTC while the originating IANA timezone is preserved.
 - End must follow start. All-day events use local-midnight boundaries.
-- Notification windows cannot start after the event. Both event types default to 15 minutes before the start.
-- `notified` becomes true only after successful Telegram delivery. Changing the start or notification window resets it to false.
+- Notification windows must start before the event. Both event types enable notifications by default with a 15-minute lead, and zero resets a configured lead to that default.
+- Notification status is `disabled`, `pending`, or `delivered`. Successful delivery changes `pending` to `delivered`; disabling changes any state to `disabled`; re-enabling changes `disabled` to `pending`; and rescheduling preserves `disabled` or resets an enabled event to `pending`.
 - Cancellation retains the event and records `cancelled_at`; deletion permanently removes it.
 
 ## Indexes and Constraints
@@ -184,7 +184,7 @@ erDiagram
 - Conversations are indexed by user, chat, creation time, kind, status, and monthly quota range.
 - Delivered conversation update IDs and update-plus-tool-interaction identifiers are unique when present.
 - Expenses are indexed by user and transaction date, category, and installment group.
-- Events are indexed by user, status, and start time, with a partial index for scheduled unnotified events ordered by notification window.
+- Events are indexed by user, status, and start time, with a partial index for scheduled pending notifications ordered by notification window.
 - Telegram claims use `update_id` as the primary deduplication key and are indexed by status and update time.
 - User-owned entities cascade when their owning user is physically deleted, subject to the future retention and deletion policy.
 

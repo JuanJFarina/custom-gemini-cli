@@ -10,6 +10,7 @@ from harle_domain.events import (
     EventStatus,
     EventType,
     InternalEvent,
+    NotificationStatus,
     all_day_event_interval,
     timed_event_interval,
 )
@@ -21,6 +22,7 @@ from harle_services.events import (
     TimedEventSchedule,
     UpdateEvent,
 )
+from harle_services.tools.internal_events import CreateEventArgs, UpdateEventArgs
 
 NOW = datetime(2026, 8, 31, 12, tzinfo=timezone.utc)
 
@@ -85,7 +87,7 @@ class FakeEventRepository:
             event
             for event in self.events.values()
             if event.status is EventStatus.SCHEDULED
-            and not event.notified
+            and event.notification_status is NotificationStatus.PENDING
             and event.notification_window_start <= current_time < event.starts_at
         ]
         return sorted(
@@ -131,7 +133,7 @@ class FakeEventRepository:
         self.events[event_id] = cancelled
         return cancelled
 
-    async def mark_notified(
+    async def mark_notification_delivered(
         self,
         *,
         user_id: UUID,
@@ -142,13 +144,16 @@ class FakeEventRepository:
         current = await self.get(user_id=user_id, event_id=event_id)
         if current is None or current.updated_at != expected_updated_at:
             return None
-        notified = replace(
+        delivered = replace(
             current,
-            notification=replace(current.notification, notified=True),
+            notification=replace(
+                current.notification,
+                status=NotificationStatus.DELIVERED,
+            ),
             timestamps=replace(current.timestamps, updated_at=updated_at),
         )
-        self.events[event_id] = notified
-        return notified
+        self.events[event_id] = delivered
+        return delivered
 
     async def delete(
         self,
@@ -205,6 +210,7 @@ def test_event_service_isolates_cancellation_and_physical_deletion() -> None:
             ),
         )
         assert event.event_type is EventType.USER_EVENT
+        assert event.notification_status is NotificationStatus.PENDING
         assert event.notification_window_start == datetime(
             2026,
             9,
@@ -213,8 +219,9 @@ def test_event_service_isolates_cancellation_and_physical_deletion() -> None:
             45,
             tzinfo=timezone.utc,
         )
-        notified = await service.mark_notified(event=event)
-        assert notified is not None and notified.notified
+        delivered = await service.mark_notification_delivered(event=event)
+        assert delivered is not None
+        assert delivered.notification_status is NotificationStatus.DELIVERED
 
         assert (
             await service.update(
@@ -239,7 +246,35 @@ def test_event_service_isolates_cancellation_and_physical_deletion() -> None:
         assert updated is not None
         assert updated.title == "Updated dentist"
         assert updated.all_day
-        assert not updated.notified
+        assert updated.notification_status is NotificationStatus.PENDING
+
+        disabled = await service.update(
+            user_id=owner_id,
+            event_id=event.id,
+            changes=UpdateEvent(notifications_enabled=False),
+        )
+        assert disabled is not None
+        assert disabled.notification_status is NotificationStatus.DISABLED
+        disabled_rescheduled = await service.update(
+            user_id=owner_id,
+            event_id=event.id,
+            changes=UpdateEvent(
+                schedule=TimedEventSchedule(
+                    starts_at=datetime(2026, 9, 3, 15),
+                    ends_at=datetime(2026, 9, 3, 16),
+                    timezone_name="America/Argentina/Cordoba",
+                ),
+            ),
+        )
+        assert disabled_rescheduled is not None
+        assert disabled_rescheduled.notification_status is NotificationStatus.DISABLED
+        reenabled = await service.update(
+            user_id=owner_id,
+            event_id=event.id,
+            changes=UpdateEvent(notifications_enabled=True),
+        )
+        assert reenabled is not None
+        assert reenabled.notification_status is NotificationStatus.PENDING
 
         cancelled = await service.cancel(user_id=owner_id, event_id=event.id)
         assert cancelled is not None
@@ -276,3 +311,104 @@ def test_event_service_isolates_cancellation_and_physical_deletion() -> None:
         assert await service.delete(user_id=other_id, event_id=event.id) is None
 
     asyncio.run(verify())
+
+
+def test_event_service_normalizes_notification_leads() -> None:
+    async def verify() -> None:
+        repository = FakeEventRepository()
+        service = EventService(repository, clock=lambda: NOW)
+        owner_id = uuid4()
+        schedule = TimedEventSchedule(
+            starts_at=datetime(2026, 9, 1, 15),
+            ends_at=datetime(2026, 9, 1, 16),
+            timezone_name="UTC",
+        )
+        defaulted = await service.create(
+            user_id=owner_id,
+            event=CreateEvent(
+                title="Default lead",
+                description="",
+                schedule=schedule,
+                notify_before=timedelta(0),
+                notifications_enabled=False,
+            ),
+        )
+        custom = await service.create(
+            user_id=owner_id,
+            event=CreateEvent(
+                title="Custom lead",
+                description="",
+                schedule=schedule,
+                notify_before=timedelta(minutes=30),
+            ),
+        )
+
+        assert defaulted.starts_at - defaulted.notification_window_start == timedelta(
+            minutes=15,
+        )
+        assert defaulted.notification_status is NotificationStatus.DISABLED
+        preserved = await service.update(
+            user_id=owner_id,
+            event_id=custom.id,
+            changes=UpdateEvent(title="Preserved lead"),
+        )
+        assert preserved is not None
+        assert preserved.starts_at - preserved.notification_window_start == timedelta(
+            minutes=30,
+        )
+        reset = await service.update(
+            user_id=owner_id,
+            event_id=custom.id,
+            changes=UpdateEvent(notify_before=timedelta(0)),
+        )
+        assert reset is not None
+        assert reset.starts_at - reset.notification_window_start == timedelta(
+            minutes=15,
+        )
+        positive = await service.update(
+            user_id=owner_id,
+            event_id=custom.id,
+            changes=UpdateEvent(notify_before=timedelta(minutes=45)),
+        )
+        assert positive is not None
+        assert positive.starts_at - positive.notification_window_start == timedelta(
+            minutes=45,
+        )
+
+    asyncio.run(verify())
+
+
+def test_event_tool_preserves_omitted_zero_and_positive_notification_leads() -> None:
+    schedule = {
+        "title": "Reminder",
+        "starts_at": datetime(2026, 9, 1, 15),
+        "ends_at": datetime(2026, 9, 1, 16),
+    }
+
+    assert CreateEventArgs(**schedule).notify_minutes_before == 15
+    assert (
+        CreateEventArgs(**schedule, notify_minutes_before=0).notify_minutes_before == 0
+    )
+    assert (
+        CreateEventArgs(**schedule, notify_minutes_before=30).notify_minutes_before
+        == 30
+    )
+
+    event_id = uuid4()
+    assert (
+        UpdateEventArgs(event_id=event_id, title="Keep").notify_minutes_before is None
+    )
+    assert (
+        UpdateEventArgs(
+            event_id=event_id,
+            notify_minutes_before=0,
+        ).notify_minutes_before
+        == 0
+    )
+    assert (
+        UpdateEventArgs(
+            event_id=event_id,
+            notify_minutes_before=30,
+        ).notify_minutes_before
+        == 30
+    )

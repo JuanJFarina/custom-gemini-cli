@@ -59,18 +59,20 @@ class AgentsScheduler:
     async def run_once(self) -> int:
         async with self._run_lock:
             due_events = await self.events.list_due_for_notification()
-            notified_count = 0
+            delivered_count = 0
             for event in due_events:
                 try:
                     delivered = await self.notifications.notify(event)
                     if not delivered:
                         continue
-                    notified = await self.events.mark_notified(event=event)
-                    notified_count += notified is not None
+                    delivered_event = await self.events.mark_notification_delivered(
+                        event=event,
+                    )
+                    delivered_count += delivered_event is not None
                 except SCHEDULER_FAILURES as exc:
                     log.warning(
                         "Event notification failed for %s: %s",
                         event.id,
                         type(exc).__name__,
                     )
-            return notified_count
+            return delivered_count

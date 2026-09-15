@@ -55,6 +55,7 @@ class CreateEventArgs(BaseModel):
     timezone: str | None = Field(default=None, min_length=1)
     event_type: EventType = EventType.USER_EVENT
     notify_minutes_before: int = Field(default=15, ge=0)
+    notifications_enabled: bool = True
 
     model_config = ConfigDict(extra="forbid")
 
@@ -75,19 +76,22 @@ class UpdateEventArgs(BaseModel):
     timezone: str | None = Field(default=None, min_length=1)
     event_type: EventType | None = None
     notify_minutes_before: int | None = Field(default=None, ge=0)
+    notifications_enabled: bool | None = None
 
     model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_changes(self) -> "UpdateEventArgs":
         schedule_kind = _schedule_kind(self, required=False)
-        if (
-            self.title is None
-            and self.description is None
-            and schedule_kind is None
-            and self.event_type is None
-            and self.notify_minutes_before is None
-        ):
+        changes = (
+            self.title,
+            self.description,
+            schedule_kind,
+            self.event_type,
+            self.notify_minutes_before,
+            self.notifications_enabled,
+        )
+        if all(change is None for change in changes):
             raise ValueError("At least one event change is required.")
         return self
 
@@ -105,7 +109,8 @@ SHARED_INSTRUCTIONS = """For every internal event tool:
 - All-day events use start_date and inclusive end_date. Use the same date for a one-day event.
 - Use exactly one complete timed or all-day schedule. Updating a schedule may also change between timed and all-day.
 - Use user_event for the user's agenda and system_event for an internal reminder or task for the assistant.
-- notify_minutes_before is non-negative and defaults to 15. Rescheduling preserves the configured lead unless a new value is supplied.
+- notifications_enabled defaults to true. Disable it only when the user asks for no notification.
+- notify_minutes_before defaults to 15 on creation. Zero also means the default 15-minute lead. On update, omission preserves the current lead and zero resets it to 15.
 - Normal reads hide cancelled events; include them only when explicitly requested. Deletion is permanent.
 - Events are one-time and create one Telegram notification. They never create recurrence or external calendar work."""
 
@@ -200,6 +205,7 @@ def create_internal_events_registration(
                     notify_before=timedelta(
                         minutes=validated.notify_minutes_before,
                     ),
+                    notifications_enabled=validated.notifications_enabled,
                 ),
             )
             return ToolCallResult(
@@ -223,6 +229,7 @@ def create_internal_events_registration(
                         if validated.notify_minutes_before is not None
                         else None
                     ),
+                    notifications_enabled=validated.notifications_enabled,
                 ),
             )
             return ToolCallResult(
@@ -375,7 +382,8 @@ def _event_payload(event: InternalEvent) -> Mapping[str, object]:
         "notify_minutes_before": int(
             (event.starts_at - event.notification_window_start).total_seconds() / 60,
         ),
-        "notified": event.notified,
+        "notifications_enabled": event.notifications_enabled,
+        "notification_status": event.notification_status.value,
     }
 
 

@@ -15,6 +15,12 @@ class EventType(str, Enum):
     SYSTEM_EVENT = "system_event"
 
 
+class NotificationStatus(str, Enum):
+    DISABLED = "disabled"
+    PENDING = "pending"
+    DELIVERED = "delivered"
+
+
 @dataclass(frozen=True, slots=True)
 class EventInterval:
     starts_at: datetime
@@ -67,7 +73,7 @@ class EventTimestamps:
 @dataclass(frozen=True, slots=True)
 class EventNotification:
     window_start: datetime
-    notified: bool
+    status: NotificationStatus
 
     def __post_init__(self) -> None:
         _require_utc(self.window_start, "Event notification window start")
@@ -82,8 +88,8 @@ class InternalEvent:
     timestamps: EventTimestamps
 
     def __post_init__(self) -> None:
-        if self.notification_window_start > self.starts_at:
-            raise ValueError("Event notification window cannot start after the event.")
+        if self.notification_window_start >= self.starts_at:
+            raise ValueError("Event notification window must start before the event.")
         if self.status is EventStatus.SCHEDULED and self.cancelled_at is not None:
             raise ValueError("A scheduled event cannot have a cancellation time.")
         if self.status is EventStatus.CANCELLED and self.cancelled_at is None:
@@ -126,8 +132,12 @@ class InternalEvent:
         return self.notification.window_start
 
     @property
-    def notified(self) -> bool:
-        return self.notification.notified
+    def notification_status(self) -> NotificationStatus:
+        return self.notification.status
+
+    @property
+    def notifications_enabled(self) -> bool:
+        return self.notification_status is not NotificationStatus.DISABLED
 
     @property
     def created_at(self) -> datetime:
