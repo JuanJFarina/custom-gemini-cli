@@ -1,19 +1,27 @@
 from asyncio import Lock
-from collections.abc import Mapping
-from datetime import datetime, timedelta, timezone
+from collections.abc import Mapping, MutableMapping
+from dataclasses import dataclass
+from datetime import datetime
+from math import isfinite
 from time import monotonic
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 from pydantic import BaseModel, ConfigDict
 
-ROSARIO_LATITUDE = -32.9468
-ROSARIO_LONGITUDE = -60.6393
-ROSARIO_TIMEZONE = timezone(timedelta(hours=-3), name="ART")
 WEATHER_TIMEOUT_SECONDS = 5
 WEATHER_CACHE_SECONDS = 600
 WEATHER_FAILURE_CACHE_SECONDS = 60
+WEATHER_CACHE_MAX_ENTRIES = 128
 WEATHER_UNAVAILABLE = "Current weather is unavailable."
+
+
+@dataclass(frozen=True)
+class _WeatherRequest:
+    latitude: float
+    longitude: float
+    timezone_name: str
 
 
 class _WeatherCache(BaseModel):
@@ -35,30 +43,45 @@ class _WeatherCache(BaseModel):
         self.expires_at = monotonic() + cache_seconds
 
 
-_WEATHER_CACHE = _WeatherCache()
+_WEATHER_CACHE: MutableMapping[_WeatherRequest, _WeatherCache] = {}
 _WEATHER_CACHE_LOCK = Lock()
 
 
-def get_current_time_and_date() -> str:
-    now = datetime.now(ROSARIO_TIMEZONE)
+def get_current_time_and_date(timezone_name: str) -> str:
+    now = datetime.now(ZoneInfo(timezone_name))
     return now.strftime("%A, %Y-%m-%d %I:%M %p %Z")
 
 
-async def get_current_weather() -> str:
-    if _WEATHER_CACHE.is_valid():
-        return _WEATHER_CACHE.value
+async def get_current_weather(
+    *,
+    latitude: float | None,
+    longitude: float | None,
+    timezone_name: str,
+) -> str:
+    request = _weather_request(
+        latitude=latitude,
+        longitude=longitude,
+        timezone_name=timezone_name,
+    )
+    if request is None:
+        return WEATHER_UNAVAILABLE
+
+    cached_weather = _read_cached_weather(request)
+    if cached_weather is not None:
+        return cached_weather
 
     async with _WEATHER_CACHE_LOCK:
-        if _WEATHER_CACHE.is_valid():
-            return _WEATHER_CACHE.value
+        cached_weather = _read_cached_weather(request)
+        if cached_weather is not None:
+            return cached_weather
 
-        weather = await _fetch_current_weather()
-        _WEATHER_CACHE.write(weather)
+        weather = await _fetch_current_weather(request)
+        _write_cached_weather(request, weather)
         return weather
 
 
-async def _fetch_current_weather() -> str:
-    url = f"https://api.open-meteo.com/v1/forecast?{_weather_query()}"
+async def _fetch_current_weather(request: _WeatherRequest) -> str:
+    url = f"https://api.open-meteo.com/v1/forecast?{_weather_query(request)}"
 
     try:
         async with httpx.AsyncClient(timeout=WEATHER_TIMEOUT_SECONDS) as client:
@@ -71,11 +94,68 @@ async def _fetch_current_weather() -> str:
     return _weather_from_payload(payload)
 
 
-def _weather_query() -> str:
+def _weather_request(
+    *,
+    latitude: float | None,
+    longitude: float | None,
+    timezone_name: str,
+) -> _WeatherRequest | None:
+    if latitude is None or longitude is None:
+        return None
+    if (
+        not isfinite(latitude)
+        or not isfinite(longitude)
+        or not -90 <= latitude <= 90
+        or not -180 <= longitude <= 180
+    ):
+        return None
+    try:
+        ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        return None
+    return _WeatherRequest(
+        latitude=latitude,
+        longitude=longitude,
+        timezone_name=timezone_name,
+    )
+
+
+def _read_cached_weather(request: _WeatherRequest) -> str | None:
+    cache_entry = _WEATHER_CACHE.get(request)
+    if cache_entry is None or not cache_entry.is_valid():
+        return None
+    return cache_entry.value
+
+
+def _write_cached_weather(request: _WeatherRequest, weather: str) -> None:
+    expired_requests = [
+        cached_request
+        for cached_request, cache_entry in _WEATHER_CACHE.items()
+        if not cache_entry.is_valid()
+    ]
+    for expired_request in expired_requests:
+        _WEATHER_CACHE.pop(expired_request, None)
+
+    if (
+        request not in _WEATHER_CACHE
+        and len(_WEATHER_CACHE) >= WEATHER_CACHE_MAX_ENTRIES
+    ):
+        oldest_request = min(
+            _WEATHER_CACHE,
+            key=lambda cached_request: _WEATHER_CACHE[cached_request].expires_at,
+        )
+        _WEATHER_CACHE.pop(oldest_request)
+
+    cache_entry = _WeatherCache()
+    cache_entry.write(weather)
+    _WEATHER_CACHE[request] = cache_entry
+
+
+def _weather_query(request: _WeatherRequest) -> str:
     return urlencode(
         {
-            "latitude": ROSARIO_LATITUDE,
-            "longitude": ROSARIO_LONGITUDE,
+            "latitude": request.latitude,
+            "longitude": request.longitude,
             "current": ",".join(
                 [
                     "temperature_2m",
@@ -86,7 +166,7 @@ def _weather_query() -> str:
                     "wind_speed_10m",
                 ],
             ),
-            "timezone": "America/Argentina/Cordoba",
+            "timezone": request.timezone_name,
         },
     )
 
@@ -177,7 +257,7 @@ def _format_unit(unit: str) -> str:
 
 
 def _weather_code_summary(code: int) -> str:
-    descriptions: dict[int, str] = {
+    descriptions: Mapping[int, str] = {
         0: "clear sky",
         1: "mainly clear",
         2: "partly cloudy",

@@ -1,26 +1,19 @@
-import re
-
-CATEGORY_COLUMNS = ("B", "C", "D", "E", "F", "G", "H", "I")
-TOTAL_COLUMN = "J"
-
-MONTH_SHEET_MAPPING = {
-    1: "enero",
-    2: "febrero",
-    3: "marzo",
-    4: "abril",
-    5: "mayo",
-    6: "junio",
-    7: "julio",
-    8: "agosto",
-    9: "septiembre",
-    10: "octubre",
-    11: "noviembre",
-    12: "diciembre",
-}
-
-FORMULA_AMOUNT_TERM = r"(?:\d+(?:\.\d+)?|\(\d+(?:\.\d+)?\s*\*\s*\d+\s*/\s*\d+\))"
-SIMPLE_FORMULA_PATTERN = re.compile(
-    rf"^=-?{FORMULA_AMOUNT_TERM}(?:[+-]{FORMULA_AMOUNT_TERM})*$",
+from harle_infrastructure.google_sheets.mappings import (
+    CATEGORY_COLUMNS,
+    FORMULA_AMOUNT_TERM,
+    GOOGLE_SHEETS_SCOPES,
+    LEGACY_EXPENSE_TIMEZONE,
+    MONTH_SHEET_MAPPING,
+    SIMPLE_FORMULA_PATTERN,
+    TOTAL_COLUMN,
 )
 
-GOOGLE_SHEETS_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+__all__ = [
+    "CATEGORY_COLUMNS",
+    "FORMULA_AMOUNT_TERM",
+    "GOOGLE_SHEETS_SCOPES",
+    "LEGACY_EXPENSE_TIMEZONE",
+    "MONTH_SHEET_MAPPING",
+    "SIMPLE_FORMULA_PATTERN",
+    "TOTAL_COLUMN",
+]

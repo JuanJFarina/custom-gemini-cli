@@ -1,4 +1,4 @@
-from harle_agent.models import ToolCallResult
+from harle_domain.tools.models import ToolCallResult
 
 
 def show_tool_results(tool_results: list[ToolCallResult]) -> str:
