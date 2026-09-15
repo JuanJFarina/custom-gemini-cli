@@ -1,19 +1,24 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from harle_domain.events import (
     EventDetails,
     EventInterval,
+    EventNotification,
     EventRepository,
     EventStatus,
     EventTimestamps,
+    EventType,
     InternalEvent,
     all_day_event_interval,
     event_range,
     timed_event_interval,
 )
+
+DEFAULT_NOTIFICATION_LEAD = timedelta(minutes=15)
+DEFAULT_DUE_EVENT_LIMIT = 100
 
 
 def utc_now() -> datetime:
@@ -56,10 +61,13 @@ class CreateEvent:
     title: str
     description: str
     schedule: EventSchedule
+    event_type: EventType = EventType.USER_EVENT
+    notify_before: timedelta = DEFAULT_NOTIFICATION_LEAD
 
     def __post_init__(self) -> None:
         if not self.title.strip():
             raise ValueError("Event title cannot be empty.")
+        _require_notification_lead(self.notify_before)
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,12 +75,22 @@ class UpdateEvent:
     title: str | None = None
     description: str | None = None
     schedule: EventSchedule | None = None
+    event_type: EventType | None = None
+    notify_before: timedelta | None = None
 
     def __post_init__(self) -> None:
-        if self.title is None and self.description is None and self.schedule is None:
+        if (
+            self.title is None
+            and self.description is None
+            and self.schedule is None
+            and self.event_type is None
+            and self.notify_before is None
+        ):
             raise ValueError("At least one event change is required.")
         if self.title is not None and not self.title.strip():
             raise ValueError("Event title cannot be empty.")
+        if self.notify_before is not None:
+            _require_notification_lead(self.notify_before)
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,14 +131,20 @@ class EventService:
         event: CreateEvent,
     ) -> InternalEvent:
         now = self._now()
+        interval = event.schedule.to_interval()
         created = InternalEvent(
             id=uuid4(),
             user_id=user_id,
             details=EventDetails(
                 title=event.title.strip(),
                 description=event.description.strip(),
-                interval=event.schedule.to_interval(),
+                interval=interval,
+                event_type=event.event_type,
                 status=EventStatus.SCHEDULED,
+            ),
+            notification=EventNotification(
+                window_start=interval.starts_at - event.notify_before,
+                notified=False,
             ),
             timestamps=EventTimestamps(
                 created_at=now,
@@ -142,6 +166,21 @@ class EventService:
         )
         if current is None:
             return None
+        interval = (
+            changes.schedule.to_interval()
+            if changes.schedule is not None
+            else current.details.interval
+        )
+        notification_lead = (
+            changes.notify_before
+            if changes.notify_before is not None
+            else current.starts_at - current.notification_window_start
+        )
+        notification_window_start = interval.starts_at - notification_lead
+        notification_changed = (
+            interval.starts_at != current.starts_at
+            or notification_window_start != current.notification_window_start
+        )
         updated = replace(
             current,
             details=replace(
@@ -156,15 +195,41 @@ class EventService:
                     if changes.description is not None
                     else current.description
                 ),
-                interval=(
-                    changes.schedule.to_interval()
-                    if changes.schedule is not None
-                    else current.details.interval
-                ),
+                interval=interval,
+                event_type=changes.event_type or current.event_type,
+            ),
+            notification=replace(
+                current.notification,
+                window_start=notification_window_start,
+                notified=False if notification_changed else current.notified,
             ),
             timestamps=replace(current.timestamps, updated_at=self._now()),
         )
         return await self.repository.update(user_id=user_id, event=updated)
+
+    async def list_due_for_notification(
+        self,
+        *,
+        limit: int = DEFAULT_DUE_EVENT_LIMIT,
+    ) -> Sequence[InternalEvent]:
+        if limit <= 0:
+            raise ValueError("Due event limit must be positive.")
+        return await self.repository.list_due_for_notification(
+            current_time=self._now(),
+            limit=limit,
+        )
+
+    async def mark_notified(
+        self,
+        *,
+        event: InternalEvent,
+    ) -> InternalEvent | None:
+        return await self.repository.mark_notified(
+            user_id=event.user_id,
+            event_id=event.id,
+            expected_updated_at=event.updated_at,
+            updated_at=self._now(),
+        )
 
     async def cancel(
         self,
@@ -194,3 +259,8 @@ class EventService:
         if now.tzinfo is None or now.utcoffset() is None:
             raise ValueError("Event service clock must return a timezone-aware time.")
         return now.astimezone(timezone.utc)
+
+
+def _require_notification_lead(value: timedelta) -> None:
+    if value < timedelta(0):
+        raise ValueError("Event notification lead cannot be negative.")

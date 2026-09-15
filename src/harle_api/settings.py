@@ -9,6 +9,7 @@ class ApiSettings(Settings):
     POSTGRES_DATABASE_URL: str
     POSTGRES_POOL_MIN_SIZE: int = 1
     POSTGRES_POOL_MAX_SIZE: int = 5
+    EVENT_SCHEDULER_INTERVAL_SECONDS: float = 300
 
 
 @cache

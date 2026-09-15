@@ -93,6 +93,21 @@ async def verify_event_isolation(database_url: str) -> None:
                 ),
             ),
         )
+        due_service = EventService(
+            PostgresEventRepository(pool),
+            clock=lambda: datetime(
+                2026,
+                9,
+                1,
+                9,
+                50,
+                tzinfo=timezone.utc,
+            ),
+        )
+        due_events = await due_service.list_due_for_notification()
+        assert [event.id for event in due_events] == [first.id]
+        notified = await due_service.mark_notified(event=first)
+        assert notified is not None and notified.notified
 
         first_events = await service.list_for_range(
             user_id=first_id,
@@ -113,22 +128,38 @@ async def verify_event_isolation(database_url: str) -> None:
         assert {event.user_id for event in first_events} == {first_id}
         assert {event.user_id for event in second_events} == {second_id}
 
-        assert await service.update(
-            user_id=second_id,
-            event_id=first.id,
-            changes=UpdateEvent(title="Denied"),
-        ) is None
+        assert (
+            await service.update(
+                user_id=second_id,
+                event_id=first.id,
+                changes=UpdateEvent(title="Denied"),
+            )
+            is None
+        )
         assert await service.cancel(user_id=second_id, event_id=first.id) is None
         assert await service.delete(user_id=second_id, event_id=first.id) is None
 
-        updated = await service.update(
+        updated = await due_service.update(
             user_id=first_id,
             event_id=first.id,
             changes=UpdateEvent(title="Updated first event"),
         )
         assert updated is not None
         assert updated.title == "Updated first event"
-        cancelled = await service.cancel(user_id=first_id, event_id=first.id)
+        assert updated.notified
+        rescheduled = await due_service.update(
+            user_id=first_id,
+            event_id=first.id,
+            changes=UpdateEvent(
+                schedule=TimedEventSchedule(
+                    starts_at=datetime(2026, 9, 1, 14),
+                    ends_at=datetime(2026, 9, 1, 15),
+                    timezone_name="UTC",
+                ),
+            ),
+        )
+        assert rescheduled is not None and not rescheduled.notified
+        cancelled = await due_service.cancel(user_id=first_id, event_id=first.id)
         assert cancelled is not None
         assert cancelled.status is EventStatus.CANCELLED
         deleted = await service.delete(user_id=first_id, event_id=first.id)

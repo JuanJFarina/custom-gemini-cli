@@ -8,8 +8,10 @@ from fastapi import BackgroundTasks, FastAPI, Request
 from pytest import MonkeyPatch
 
 import harle_api.app as app_module
+from harle_domain.messaging import OutboundMessenger
 from harle_services.access import PreflightService, TemporaryBan
 from harle_services.bootstrap import ProcessRuntime
+from harle_services.events import AgentsScheduler
 from harle_services.messaging import (
     MessageCoordinator,
     MessageSubmission,
@@ -52,13 +54,30 @@ class FakeMessages:
         return MessageSubmission(status, temporary_ban)
 
 
-def fake_runtime(messages: FakeMessages) -> ProcessRuntime:
+class FakeMessenger:
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    async def send_message(self, *, chat_id: int, text: str) -> None:
+        del chat_id
+        self.messages.append(text)
+
+    async def send_typing_action(self, *, chat_id: int) -> None:
+        del chat_id
+
+
+def fake_runtime(
+    messages: FakeMessages,
+    messenger: FakeMessenger | None = None,
+) -> ProcessRuntime:
     return ProcessRuntime(
         pool=cast(asyncpg.Pool, object()),
         preflight=cast(PreflightService, object()),
         users=cast(UserRuntimeFactory, object()),
         tools=cast(ToolsInjector, object()),
         messages=cast(MessageCoordinator, messages),
+        messenger=cast(OutboundMessenger, messenger or FakeMessenger()),
+        scheduler=cast(AgentsScheduler, object()),
     )
 
 
@@ -72,7 +91,8 @@ def test_webhook_persists_before_starting_one_process_and_ignores_duplicate(
                 MessageSubmissionStatus.DUPLICATE,
             ],
         )
-        runtime = fake_runtime(messages)
+        messenger = FakeMessenger()
+        runtime = fake_runtime(messages, messenger)
         application = FastAPI()
         application.state.runtime = runtime
         request = Request({"type": "http", "app": application})
@@ -135,6 +155,7 @@ def test_joined_queued_and_interrupted_updates_do_not_start_another_process(
         application.state.runtime = runtime
         request = Request({"type": "http", "app": application})
         process_calls = 0
+
         async def fake_process(**_: object) -> None:
             nonlocal process_calls
             process_calls += 1
@@ -174,23 +195,19 @@ def test_rate_limited_update_notifies_without_starting_processing(
 ) -> None:
     async def verify() -> None:
         messages = FakeMessages([MessageSubmissionStatus.RATE_LIMITED])
-        runtime = fake_runtime(messages)
+        messenger = FakeMessenger()
+        runtime = fake_runtime(messages, messenger)
         application = FastAPI()
         application.state.runtime = runtime
         request = Request({"type": "http", "app": application})
-        notices: list[str] = []
         process_calls = 0
 
         async def fake_process(**_: object) -> None:
             nonlocal process_calls
             process_calls += 1
 
-        async def fake_send_message(*, text: str, **_: object) -> None:
-            notices.append(text)
-
         monkeypatch.setattr(app_module, "get_settings", FakeSettings)
         monkeypatch.setattr(app_module, "process_telegram_messages", fake_process)
-        monkeypatch.setattr(app_module, "send_message", fake_send_message)
 
         tasks = BackgroundTasks()
         response = await app_module.post_telegram_webhook(
@@ -210,7 +227,7 @@ def test_rate_limited_update_notifies_without_starting_processing(
 
         assert b'"reason":"temporarily_banned"' in response.body
         assert b'"notified":true' in response.body
-        assert len(notices) == 1
+        assert len(messenger.messages) == 1
         assert process_calls == 0
 
     asyncio.run(verify())

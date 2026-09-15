@@ -36,6 +36,20 @@ class FakeAccounts(AccountRepository):
     ) -> ResolvedUser | None:
         return self.users.get(telegram_user_id)
 
+    async def resolve_user_telegram_identity(
+        self,
+        *,
+        user_id: UUID,
+    ) -> ResolvedUser | None:
+        return next(
+            (
+                resolved
+                for resolved in self.users.values()
+                if resolved.user.id == user_id
+            ),
+            None,
+        )
+
 
 class FakeConversationUsage:
     def __init__(self, completed: int) -> None:
@@ -99,9 +113,11 @@ def test_preflight_resolves_access_and_reserves_monthly_quota() -> None:
     )
 
     result = asyncio.run(service.check(1))
+    scheduled_user = asyncio.run(service.resolve_active_user(user.user.id))
 
     assert isinstance(result, PreflightAccepted)
     assert result.resolved_user is user
+    assert scheduled_user is user
     assert result.quota_reservation.remaining == 1
     assert usage.created_from == datetime(2026, 12, 1, tzinfo=timezone.utc)
     assert usage.created_before == datetime(2027, 1, 1, tzinfo=timezone.utc)

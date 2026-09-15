@@ -10,7 +10,7 @@ from google.genai.types import (
     GoogleSearch,
     Tool,
 )
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from harle_domain.tools.models import (
     InternalToolCallInteraction,
@@ -24,23 +24,20 @@ from .environment_knowledge import (
     get_current_weather,
 )
 from .models import (
+    HARLE_THOUGHT_ADAPTER,
     HarleConfig,
     HarlePersonalContext,
     HarleRunResult,
     HarleStores,
     HarleThought,
-    HarleThoughtAdapter,
 )
 from .prompts import SYSTEM_PROMPT
 from .retry_decorator import retry
-from .settings import get_agent_settings
 from .tools import show_tool_results
-
-SETTINGS = get_agent_settings()
 
 
 class Harle(BaseModel):
-    config: HarleConfig = Field(default_factory=HarleConfig)
+    config: HarleConfig
     stores: HarleStores
     personal_context: HarlePersonalContext
     on_tool_started: Callable[[], Awaitable[None]] | None = None
@@ -105,7 +102,7 @@ class Harle(BaseModel):
     ) -> HarleRunResult:
         tool_interactions = tool_interactions or []
         tool_results = _tool_results(tool_interactions)
-        if len(tool_interactions) >= SETTINGS.MAX_LOOPS:
+        if len(tool_interactions) >= self.config.max_loops:
             return HarleRunResult(
                 response_text=(
                     "I'm looping infinitely, these are the tool results so far: "
@@ -188,7 +185,7 @@ class Harle(BaseModel):
                 text_parts.append(text.strip())
 
         response_text = self._extract_json_object(text_parts[-1])
-        return HarleThoughtAdapter.validate_json(response_text)
+        return HARLE_THOUGHT_ADAPTER.validate_json(response_text)
 
     async def _call_tools_in_batches(
         self,

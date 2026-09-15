@@ -1,8 +1,10 @@
 from .models import (
     EventDetails,
     EventInterval,
+    EventNotification,
     EventStatus,
     EventTimestamps,
+    EventType,
     InternalEvent,
 )
 from .ports import EventRepository
@@ -16,10 +18,12 @@ from .rules import (
 __all__ = [
     "EventDetails",
     "EventInterval",
+    "EventNotification",
     "EventRange",
     "EventRepository",
     "EventStatus",
     "EventTimestamps",
+    "EventType",
     "InternalEvent",
     "all_day_event_interval",
     "event_range",

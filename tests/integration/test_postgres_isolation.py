@@ -101,8 +101,15 @@ async def verify_isolation(database_url: str) -> None:
         second_user = await accounts.resolve_telegram_identity(
             telegram_user_id=second_telegram_id,
         )
+        first_scheduled_user = await accounts.resolve_user_telegram_identity(
+            user_id=first_id,
+        )
         assert first_user is not None and first_user.user.id == first_id
         assert second_user is not None and second_user.user.id == second_id
+        assert first_scheduled_user is not None
+        assert first_scheduled_user.identity.external_user_id == str(
+            first_telegram_id,
+        )
 
         user_profiles = PostgresUserProfileRepository(pool)
         assistant_profiles = PostgresAssistantProfileRepository(pool)

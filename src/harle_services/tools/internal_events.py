@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from harle_domain.events import InternalEvent
+from harle_domain.events import EventType, InternalEvent
 from harle_domain.tools import (
     ToolCallResult,
     ToolDefinition,
@@ -53,6 +53,8 @@ class CreateEventArgs(BaseModel):
     start_date: date | None = None
     end_date: date | None = None
     timezone: str | None = Field(default=None, min_length=1)
+    event_type: EventType = EventType.USER_EVENT
+    notify_minutes_before: int = Field(default=15, ge=0)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -71,13 +73,21 @@ class UpdateEventArgs(BaseModel):
     start_date: date | None = None
     end_date: date | None = None
     timezone: str | None = Field(default=None, min_length=1)
+    event_type: EventType | None = None
+    notify_minutes_before: int | None = Field(default=None, ge=0)
 
     model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_changes(self) -> "UpdateEventArgs":
         schedule_kind = _schedule_kind(self, required=False)
-        if self.title is None and self.description is None and schedule_kind is None:
+        if (
+            self.title is None
+            and self.description is None
+            and schedule_kind is None
+            and self.event_type is None
+            and self.notify_minutes_before is None
+        ):
             raise ValueError("At least one event change is required.")
         return self
 
@@ -94,8 +104,10 @@ SHARED_INSTRUCTIONS = """For every internal event tool:
 - Timed event starts_at and ends_at are local ISO date-times without UTC offsets. A supplied IANA timezone overrides the user's profile timezone.
 - All-day events use start_date and inclusive end_date. Use the same date for a one-day event.
 - Use exactly one complete timed or all-day schedule. Updating a schedule may also change between timed and all-day.
+- Use user_event for the user's agenda and system_event for an internal reminder or task for the assistant.
+- notify_minutes_before is non-negative and defaults to 15. Rescheduling preserves the configured lead unless a new value is supplied.
 - Normal reads hide cancelled events; include them only when explicitly requested. Deletion is permanent.
-- These passive one-time events never create recurrence, reminders, notifications, external calendar work, or background jobs."""
+- Events are one-time and create one Telegram notification. They never create recurrence or external calendar work."""
 
 DEFINITIONS = (
     ToolDefinition(
@@ -112,7 +124,7 @@ DEFINITIONS = (
     ToolDefinition(
         name="create_event",
         family=FAMILY,
-        description="Create one timed or all-day internal event.",
+        description="Create one timed or all-day event with a notification.",
         argument_model=CreateEventArgs,
         effect=ToolEffect.MODIFY,
         can_run_concurrently=False,
@@ -184,6 +196,10 @@ def create_internal_events_registration(
                     title=validated.title,
                     description=validated.description,
                     schedule=_schedule(validated, context.timezone),
+                    event_type=validated.event_type,
+                    notify_before=timedelta(
+                        minutes=validated.notify_minutes_before,
+                    ),
                 ),
             )
             return ToolCallResult(
@@ -201,6 +217,12 @@ def create_internal_events_registration(
                     title=validated.title,
                     description=validated.description,
                     schedule=_optional_schedule(validated, context.timezone),
+                    event_type=validated.event_type,
+                    notify_before=(
+                        timedelta(minutes=validated.notify_minutes_before)
+                        if validated.notify_minutes_before is not None
+                        else None
+                    ),
                 ),
             )
             return ToolCallResult(
@@ -345,7 +367,15 @@ def _event_payload(event: InternalEvent) -> Mapping[str, object]:
         "local_end": end_value,
         "timezone": event.timezone,
         "all_day": event.all_day,
+        "event_type": event.event_type.value,
         "status": event.status.value,
+        "notification_window_start": event.notification_window_start.astimezone(
+            timezone_info,
+        ).isoformat(),
+        "notify_minutes_before": int(
+            (event.starts_at - event.notification_window_start).total_seconds() / 60,
+        ),
+        "notified": event.notified,
     }
 
 

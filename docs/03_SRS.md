@@ -31,11 +31,12 @@ This document distinguishes the implemented controlled-beta baseline from target
 - PostgreSQL stores Telegram conversations, tool interactions, profiles, personal history, internal expenses, internal events, and Telegram update claims.
 - Tool authorization gives commercial users internal expenses and events. Juan receives internal events and legacy Google Sheets expenses instead of internal expenses.
 - Commercial expenses use Argentine pesos, fixed categories, permanent deletion, and transaction UUIDs. Updating or deleting one installment affects its complete installment group.
-- Internal events are passive, private, one-time timed or all-day records. Cancellation retains an event; deletion is permanent.
+- Internal events are private, one-time timed or all-day `user_event` or `system_event` records. Cancellation retains an event; deletion is permanent.
+- Every event has a notification window and delivery state. A process-local scheduler wakes the owning active user's agent every five minutes for eligible events and marks the event notified after successful Telegram delivery.
 - Telegram updates are persisted and deduplicated before assistant execution. Consecutive messages may join a turn until tool execution or delivery begins.
 - The tenth valid message within two seconds triggers a per-identity cooldown. Cooldowns escalate from 60 seconds to 5 minutes and then 1 hour, and strikes decay after normal use.
 - Monthly quotas count successful completed conversations within UTC month boundaries and include process-local in-flight reservations. Configured plan limits, rather than application constants, determine allowance.
-- Runtime authorization for inferred writes, action audits, durable work queues, automated subscription synchronization, privacy workflows, reminders, proactive behavior, and multi-user Google integrations remain pending.
+- Runtime authorization for inferred writes, action audits, durable work queues, automated subscription synchronization, privacy workflows, notification preferences, proactive behavior, and multi-user Google integrations remain pending.
 
 ## User Requirements
 
@@ -49,7 +50,7 @@ This document distinguishes the implemented controlled-beta baseline from target
 - **UR-08 Read on request**: Harle may read or query connected data when the user asks a question and the action does not modify the environment.
 - **UR-09 User-authorized modification**: Harle shall modify data immediately only when the current user message directly requests it. The target product shall require explicit confirmation before executing an inferred or assistant-proposed modification.
 - **UR-10 Personal finance**: Harle shall help users query, add, correct, and understand personal finance data through natural conversation.
-- **UR-11 Productivity support**: Harle shall provide private internal events in the controlled beta and may later add reminders, notifications, or external calendar integration.
+- **UR-11 Productivity support**: Harle shall provide private internal events and process-local Telegram notifications, and may later add durable delivery, notification preferences, recurrence, or external calendar integration.
 - **UR-12 Companionship**: Harle shall help users feel better, reflect, stay organized, and improve their lives while respecting healthy relationship boundaries.
 - **UR-13 Proactive support**: The target product shall be able to follow up, remind, or check in when the user has enabled that behavior, the follow-up is useful, and the action respects the user's notification preferences.
 - **UR-14 Privacy and safety**: Harle shall protect user data, minimize unnecessary exposure, and make safety a core product behavior.
@@ -134,14 +135,14 @@ This document distinguishes the implemented controlled-beta baseline from target
 
 ### Productivity
 
-- **FR-44**: The controlled beta shall provide private, passive, one-time internal events to every entitled user.
+- **FR-44**: The controlled beta shall provide private, one-time internal events with process-local notifications to every entitled user.
 - **FR-45**: Harle shall list owned events overlapping a bounded local date range, excluding cancelled events unless the user requests them.
 - **FR-46**: Harle shall create, update, cancel, or permanently delete only events owned by the requesting user and only when the current message directly requests the modification.
 - **FR-47**: Events shall support timed and all-day schedules, preserve the originating IANA timezone, store UTC boundaries, and require the end to follow the start.
-- **FR-48**: Controlled-beta events shall create no recurrence, attendees, reminders, notifications, external synchronization, or background work. Later reminder or calendar integrations shall be user-scoped, revocable, and governed by the target authorization policy.
-- **FR-80**: Future internal events shall have type `user_event` or `system_event`. User events represent the user's real-life agenda; system events represent internal reminders or tasks for the agent.
-- **FR-81**: Every future event shall have `notification_window_start` and `notified`. User events shall use their configured notification window; system events shall default it to 15 minutes before `starts_at`.
-- **FR-82**: A future `AgentsScheduler` shall run every five minutes and select scheduled events where `notified` is false, `notification_window_start` is at or before the current time, and `starts_at` is after the current time.
+- **FR-48**: Controlled-beta events shall create no recurrence, attendees, external synchronization, quiet-period behavior, or durable background work. Later reminder or calendar integrations shall be user-scoped, revocable, and governed by the target authorization policy.
+- **FR-80**: Internal events shall have type `user_event` or `system_event`. User events represent the user's real-life agenda; system events represent internal reminders or tasks for the agent.
+- **FR-81**: Every event shall have `notification_window_start` and `notified`. Both event types shall default to a notification window 15 minutes before `starts_at`, and users may configure a non-negative lead.
+- **FR-82**: A process-local `AgentsScheduler` shall run every five minutes and select scheduled events where `notified` is false, `notification_window_start` is at or before the current time, and `starts_at` is after the current time.
 - **FR-83**: The scheduler shall wake the owning user's request-scoped agent for every selected event. The agent shall treat user events as agenda context and system events as user-owned scheduled task context.
 - **FR-84**: An event shall be marked `notified` only after its notification is sent successfully. Changing its start or notification window shall reset `notified` to false.
 - **FR-85**: Harle shall accept images and voice notes from Telegram as multimodal conversation input and make their interpreted content available to the user-scoped agent.
@@ -159,9 +160,9 @@ This document distinguishes the implemented controlled-beta baseline from target
 
 ### Runtime Architecture
 
-- **FR-55**: The controlled-beta runtime shall support request-triggered Telegram runs. Scheduled background runs are a later capability.
+- **FR-55**: The controlled-beta runtime shall support request-triggered Telegram runs and process-local scheduled event-notification runs. General scheduled background work remains a later capability.
 - **FR-56**: A future agent scheduler shall select eligible users or agents for proactive checks, respecting opt-in settings, quiet periods, rate limits, and bounded prioritization rules.
-- **FR-57**: A future scheduled run shall load the same user-scoped context as a normal conversation, including conversations, profiles, reminders, relevant external context, and authorized tool families.
+- **FR-57**: A scheduled event-notification run shall load the owning user's conversations, profiles, and relevant external context without exposing modifying tools. Future general scheduled runs may load additional authorized context and tools under the target authorization policy.
 - **FR-58**: The target broad-release runtime shall use durable background queues for accepted inbound work and outbound delivery. Future scheduler work, proposed actions, and integration polling shall also use durable queues when work must survive interruptions.
 - **FR-59**: The runtime shall construct user-scoped stores and tool configuration from the resolved internal user account. Only Juan's UUID-gated legacy Google Sheets compatibility path may use integration settings from process configuration.
 - **FR-60**: Stores that require external connections shall use process-wide connection pools where appropriate while preserving per-user data boundaries in store adapters.
@@ -189,7 +190,7 @@ This document distinguishes the implemented controlled-beta baseline from target
 - **NFR-12 Maintainability**: Assistant, API, storage, and tools shall remain modular enough to add new integrations without creating a brittle tool collection.
 - **NFR-13 Observability**: Before broad launch, production operations shall expose enough safe logs, metrics, and health checks to detect failures and cost regressions.
 - **NFR-14 Compliance discovery**: Legal, privacy, and security obligations for storing sensitive user data shall be investigated before broad paid release.
-- **NFR-15 Background reliability**: Future scheduled runs, queued work, and outbound notifications shall be observable, retryable where safe, and auditable enough to diagnose missed or duplicate actions.
+- **NFR-15 Background reliability**: Process-local event notifications shall retry failed delivery while the event remains in the future. Future queued work and durable outbound notifications shall be observable, retryable where safe, and auditable enough to diagnose missed or duplicate actions.
 
 ## Program
 
@@ -200,11 +201,12 @@ Harle is conceptually divided into these program areas:
 - **Assistant engine**: Builds user-scoped context, calls the model, parses structured output, executes available tools, caps tool loops, and returns final text.
 - **Message coordinator**: Deduplicates Telegram updates, aggregates safe consecutive messages, and serializes conflicting work per identity.
 - **Memory and profile stores**: Persist conversations, retrieve bounded context, and store durable user and assistant profile data.
-- **Expense and event stores**: Persist user-owned internal expenses and passive events.
+- **Expense and event stores**: Persist user-owned internal expenses, typed events, notification windows, and delivery state.
 - **Context providers**: Provide current date, time, and weather from user-specific timezone and location inputs.
 - **Tool system**: Defines tool families, effects, argument contracts, authorization, prompt relevance, request-scoped handlers, and structured results.
 - **Preflight services**: Resolve identity and subscription, apply temporary bans, and reserve monthly quota before assistant execution.
-- **Future runtime services**: Proposed-action, audit, durable delivery, `AgentsScheduler`, event notification, privacy, subscription-synchronization, Google import, and multimodal-input services remain pending.
+- **Event scheduler**: Selects eligible events every five minutes, wakes the owning active user's agent, sends Telegram notifications, and records successful delivery.
+- **Future runtime services**: Proposed-action, audit, durable delivery, privacy, subscription-synchronization, Google import, and multimodal-input services remain pending.
 - **External integrations**: Connects to AI providers, Telegram, PostgreSQL, Google Sheets, future productivity services, weather data, and external account or subscription systems.
 
 The implemented controlled-beta message flow is:
@@ -220,15 +222,15 @@ The implemented controlled-beta message flow is:
 9. Harle sends the final response and persists the completed conversation and update state.
 10. The quota reservation is released on every admitted outcome.
 
-The future scheduled-agent flow is:
+The implemented scheduled-event flow is:
 
 1. `AgentsScheduler` runs every five minutes.
 2. It selects scheduled, unnotified events whose notification window has started and whose event start remains in the future.
-3. The runtime builds the owning user's request-scoped stores, context providers, and tool configuration.
+3. The runtime resolves the owning active user's Telegram identity and builds the user's request-scoped stores and context providers.
 4. Harle receives each event as agenda context for a user event or scheduled task context for a system event.
-5. Harle sends an outbound notification only when allowed by user preferences and platform limits.
-6. The event is marked notified after successful delivery.
-7. Any additional modification not directly authorized by the user becomes a proposed action.
+5. Harle generates a concise notification without modifying tools or a monthly quota reservation.
+6. Harle sends the notification to the user's private Telegram chat.
+7. The event is marked notified after successful delivery. Failed delivery remains eligible until the event starts.
 
 ## Machine
 
@@ -255,7 +257,7 @@ Production deployment shall provide:
 - Health checks for platform availability.
 - Connection pooling appropriate for expected user count.
 - Monitoring for request failures, provider failures, latency, token usage, and tool execution failures.
-- Monitoring for duplicate prevention and future queue, scheduler, reminder, and outbound notification failures.
+- Monitoring for duplicate prevention, scheduler and notification failures, and future queue failures.
 - Enforcement of the controlled beta's single-process deployment boundary until distributed coordination exists.
 
 Open requirements that need product discovery:
@@ -263,7 +265,7 @@ Open requirements that need product discovery:
 - Exact privacy and legal requirements for storing conversations, profiles, personal history, and finance data.
 - Subscription plan boundaries, usage limits, free trials, failed payments, and cancellation behavior.
 - Telegram authorization UX for approving, cancelling, and expiring proposed modifications.
-- Reminder, notification, and external calendar behavior beyond the implemented passive event capability.
+- Durable notification delivery, quiet periods, preferences, recurrence, missed-window behavior, and external calendar integration beyond the process-local event capability.
 - Data retention, deletion, export, and backup policies.
 - Concrete latency, cost, and reliability targets for paid launch.
 - WhatsApp integration requirements for a later product phase.

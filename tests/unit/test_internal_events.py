@@ -8,6 +8,7 @@ import pytest
 
 from harle_domain.events import (
     EventStatus,
+    EventType,
     InternalEvent,
     all_day_event_interval,
     timed_event_interval,
@@ -70,12 +71,31 @@ class FakeEventRepository:
             and event.ends_at > starts_at
             and (
                 event.status is EventStatus.SCHEDULED
-                or (
-                    include_cancelled
-                    and event.status is EventStatus.CANCELLED
-                )
+                or (include_cancelled and event.status is EventStatus.CANCELLED)
             )
         ]
+
+    async def list_due_for_notification(
+        self,
+        *,
+        current_time: datetime,
+        limit: int,
+    ) -> Sequence[InternalEvent]:
+        due = [
+            event
+            for event in self.events.values()
+            if event.status is EventStatus.SCHEDULED
+            and not event.notified
+            and event.notification_window_start <= current_time < event.starts_at
+        ]
+        return sorted(
+            due,
+            key=lambda event: (
+                event.notification_window_start,
+                event.starts_at,
+                event.id,
+            ),
+        )[:limit]
 
     async def update(
         self,
@@ -110,6 +130,25 @@ class FakeEventRepository:
         )
         self.events[event_id] = cancelled
         return cancelled
+
+    async def mark_notified(
+        self,
+        *,
+        user_id: UUID,
+        event_id: UUID,
+        expected_updated_at: datetime,
+        updated_at: datetime,
+    ) -> InternalEvent | None:
+        current = await self.get(user_id=user_id, event_id=event_id)
+        if current is None or current.updated_at != expected_updated_at:
+            return None
+        notified = replace(
+            current,
+            notification=replace(current.notification, notified=True),
+            timestamps=replace(current.timestamps, updated_at=updated_at),
+        )
+        self.events[event_id] = notified
+        return notified
 
     async def delete(
         self,
@@ -165,12 +204,26 @@ def test_event_service_isolates_cancellation_and_physical_deletion() -> None:
                 ),
             ),
         )
+        assert event.event_type is EventType.USER_EVENT
+        assert event.notification_window_start == datetime(
+            2026,
+            9,
+            1,
+            17,
+            45,
+            tzinfo=timezone.utc,
+        )
+        notified = await service.mark_notified(event=event)
+        assert notified is not None and notified.notified
 
-        assert await service.update(
-            user_id=other_id,
-            event_id=event.id,
-            changes=UpdateEvent(title="Changed"),
-        ) is None
+        assert (
+            await service.update(
+                user_id=other_id,
+                event_id=event.id,
+                changes=UpdateEvent(title="Changed"),
+            )
+            is None
+        )
         updated = await service.update(
             user_id=owner_id,
             event_id=event.id,
@@ -186,6 +239,7 @@ def test_event_service_isolates_cancellation_and_physical_deletion() -> None:
         assert updated is not None
         assert updated.title == "Updated dentist"
         assert updated.all_day
+        assert not updated.notified
 
         cancelled = await service.cancel(user_id=owner_id, event_id=event.id)
         assert cancelled is not None
