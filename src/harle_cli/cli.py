@@ -5,7 +5,11 @@ from uuid import UUID
 
 from harle_agent import __version__
 from harle_agent.agent import Harle
-from harle_agent.models import HarlePersonalContext, HarleStores
+from harle_agent.models import (
+    HarlePersonalContext,
+    HarleStores,
+    default_harle_config,
+)
 from harle_agent.retry_decorator import ASSISTANT_FAILURES
 from harle_agent.stores import FileConversationStore
 from harle_domain.tools.models import HarleToolStore
@@ -43,6 +47,7 @@ def main() -> int:
             else HarleToolStore()
         )
         harle = Harle(
+            config=default_harle_config(),
             stores=HarleStores(
                 conversation_store=FileConversationStore(),
                 tool_store=tool_store,

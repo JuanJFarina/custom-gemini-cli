@@ -32,6 +32,13 @@ class EventRepository(Protocol):
         include_cancelled: bool = False,
     ) -> Sequence[InternalEvent]: ...
 
+    async def list_due_for_notification(
+        self,
+        *,
+        current_time: datetime,
+        limit: int,
+    ) -> Sequence[InternalEvent]: ...
+
     async def update(
         self,
         *,
@@ -45,6 +52,15 @@ class EventRepository(Protocol):
         user_id: UUID,
         event_id: UUID,
         cancelled_at: datetime,
+    ) -> InternalEvent | None: ...
+
+    async def mark_notification_delivered(
+        self,
+        *,
+        user_id: UUID,
+        event_id: UUID,
+        expected_updated_at: datetime,
+        updated_at: datetime,
     ) -> InternalEvent | None: ...
 
     async def delete(

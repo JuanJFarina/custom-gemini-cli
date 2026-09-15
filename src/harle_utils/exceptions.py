@@ -24,3 +24,7 @@ class ToolUnavailableError(ValueError):
 
 class InvalidDatabaseSchemaError(RuntimeError):
     pass
+
+
+class MessageDeliveryError(RuntimeError):
+    pass

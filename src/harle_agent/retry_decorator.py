@@ -13,7 +13,6 @@ from .models import HarleResponse
 from .settings import get_agent_settings
 from .tools import show_tool_results
 
-SETTINGS = get_agent_settings()
 ASSISTANT_FAILURES = (
     APIError,
     ClientError,
@@ -30,8 +29,9 @@ def retry(
 ) -> Callable[..., Awaitable[Any]]:
     @wraps(func)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        settings = get_agent_settings()
         attempts = 0
-        max_attempts = 1 if func.__name__ == "_call_tool" else SETTINGS.MAX_RETRIES
+        max_attempts = 1 if func.__name__ == "_call_tool" else settings.MAX_RETRIES
         last_error_message = ""
         start_time = time()
         while attempts < max_attempts:
@@ -69,7 +69,7 @@ def retry(
                 response="I can't respond right now, sorry !",
             )
         raise RuntimeError(
-            f"Unknown error: {func.__name__} failed after {SETTINGS.MAX_RETRIES} attempts.",
+            f"Unknown error: {func.__name__} failed after {settings.MAX_RETRIES} attempts.",
         )
 
     return wrapper

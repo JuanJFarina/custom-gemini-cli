@@ -6,6 +6,7 @@ import asyncpg
 from harle_domain.conversations.ports import ConversationStore
 from harle_domain.events import EventRepository
 from harle_domain.expenses import ExpenseRepository
+from harle_domain.messaging import OutboundMessenger
 from harle_infrastructure.google_sheets import (
     GoogleSheetsClientFactory,
     LegacyGoogleSheetsSettings,
@@ -22,8 +23,13 @@ from harle_infrastructure.postgres import (
     create_postgres_pool,
     validate_postgres_schema,
 )
+from harle_infrastructure.telegram import TelegramMessenger
 from harle_services.access import PreflightService
-from harle_services.events import EventService
+from harle_services.events import (
+    AgentsScheduler,
+    EventNotificationService,
+    EventService,
+)
 from harle_services.expenses import ExpenseService
 from harle_services.messaging import MessageCoordinator
 from harle_services.runtime import UserRuntimeFactory
@@ -45,6 +51,17 @@ class ProcessRuntime:
     users: UserRuntimeFactory
     tools: ToolsInjector
     messages: MessageCoordinator
+    messenger: OutboundMessenger
+    scheduler: AgentsScheduler
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessRuntimeConfig:
+    database_url: str
+    pool_min_size: int
+    pool_max_size: int
+    telegram_bot_token: str
+    scheduler_interval_seconds: float = 300
 
 
 def create_tools_injector(
@@ -83,16 +100,14 @@ def create_tools_injector(
 
 
 async def create_process_runtime(
+    config: ProcessRuntimeConfig,
     *,
-    database_url: str,
-    pool_min_size: int,
-    pool_max_size: int,
     legacy_google_sheets_settings: LegacyGoogleSheetsSettings | None = None,
 ) -> ProcessRuntime:
     pool = await create_postgres_pool(
-        database_url=database_url,
-        min_size=pool_min_size,
-        max_size=pool_max_size,
+        database_url=config.database_url,
+        min_size=config.pool_min_size,
+        max_size=config.pool_max_size,
     )
     try:
         await validate_postgres_schema(pool)
@@ -100,14 +115,61 @@ async def create_process_runtime(
         await pool.close()
         raise
 
-    accounts = PostgresAccountRepository(pool)
-    conversations = PostgresConversationRepository(pool)
-    tools = create_tools_injector(
+    return _build_process_runtime(
+        pool,
+        config,
         legacy_google_sheets_settings,
-        expense_repository=PostgresExpenseRepository(pool),
-        event_repository=PostgresEventRepository(pool),
     )
 
+
+def _build_process_runtime(
+    pool: asyncpg.Pool,
+    config: ProcessRuntimeConfig,
+    legacy_settings: LegacyGoogleSheetsSettings | None,
+) -> ProcessRuntime:
+    accounts = PostgresAccountRepository(pool)
+    conversations = PostgresConversationRepository(pool)
+    event_repository = PostgresEventRepository(pool)
+    messenger = TelegramMessenger(config.telegram_bot_token)
+    users = _create_user_runtime_factory(
+        pool,
+        conversations,
+    )
+    preflight = PreflightService(
+        accounts=accounts,
+        conversations=conversations,
+    )
+    notifications = EventNotificationService(
+        preflight=preflight,
+        users=users,
+        messenger=messenger,
+    )
+    return ProcessRuntime(
+        pool=pool,
+        preflight=preflight,
+        users=users,
+        tools=create_tools_injector(
+            legacy_settings,
+            expense_repository=PostgresExpenseRepository(pool),
+            event_repository=event_repository,
+        ),
+        messages=MessageCoordinator(
+            PostgresTelegramUpdateRepository(pool),
+            preflight.check_rate_limit,
+        ),
+        messenger=messenger,
+        scheduler=AgentsScheduler(
+            events=EventService(event_repository),
+            notifications=notifications,
+            interval_seconds=config.scheduler_interval_seconds,
+        ),
+    )
+
+
+def _create_user_runtime_factory(
+    pool: asyncpg.Pool,
+    conversations: PostgresConversationRepository,
+) -> UserRuntimeFactory:
     def conversation_store(
         user_id: UUID,
         chat_id: int,
@@ -118,26 +180,13 @@ async def create_process_runtime(
             telegram_chat_id=chat_id,
         )
 
-    users = UserRuntimeFactory(
+    return UserRuntimeFactory(
         user_profiles=PostgresUserProfileRepository(pool),
         assistant_profiles=PostgresAssistantProfileRepository(pool),
         conversation_store_builder=conversation_store,
     )
-    preflight = PreflightService(
-        accounts=accounts,
-        conversations=conversations,
-    )
-    return ProcessRuntime(
-        pool=pool,
-        preflight=preflight,
-        users=users,
-        tools=tools,
-        messages=MessageCoordinator(
-            PostgresTelegramUpdateRepository(pool),
-            preflight.check_rate_limit,
-        ),
-    )
 
 
 async def close_process_runtime(runtime: ProcessRuntime) -> None:
+    await runtime.scheduler.stop()
     await runtime.pool.close()

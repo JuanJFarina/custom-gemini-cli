@@ -20,7 +20,10 @@
 - **Expense date handling**: Transactions without an explicit date use the previous local day from 00:00 through 04:59, and Harle reports when this rule was applied.
 - **Juan-only Google Sheets expenses**: Juan's stable internal UUID receives the existing private Google Sheets expense family instead of commercial PostgreSQL expenses.
 - **Internal events**: Every entitled user can list, create, update, cancel, and permanently delete private one-time timed or all-day events.
-- **Event policy**: Events preserve an IANA timezone, store UTC boundaries, hide cancelled events from normal reads, and create no reminders, notifications, recurrence, attendees, external synchronization, or background work.
+- **Event types and notification state**: Events are `user_event` agenda records or `system_event` assistant tasks, preserve an IANA timezone and UTC boundaries, and store a notification window with status `disabled`, `pending`, or `delivered`.
+- **Event notifications**: Events enable notifications by default with a 15-minute lead. A process-local `AgentsScheduler` checks every five minutes, wakes the owning active user's agent without modifying tools, sends a concise Telegram notification for pending events, and marks the notification delivered only after successful delivery.
+- **Event notification policy**: Users can disable or re-enable notifications. Rescheduling an enabled event makes its notification pending, rescheduling a disabled event keeps it disabled, zero resets the lead to the 15-minute default, failed delivery retries while the event remains in the future, and scheduled notifications do not consume conversation quota.
+- **Event scope**: Events remain private and one-time, hide cancelled records from normal reads, and create no recurrence, attendees, external synchronization, quiet-period behavior, or durable background work.
 - **Telegram deduplication**: Every Telegram `update_id` is persisted before assistant work so webhook retries do not create a second conversation or tool change.
 - **Ordered message aggregation**: Consecutive messages join the active turn while reasoning is safe to restart; messages received after tool execution or delivery begins become the next turn.
 - **Temporary safety bans**: The tenth valid message within two seconds triggers a per-identity cooldown that escalates from 60 seconds to 5 minutes and then 1 hour, with strike decay and at most one notice per cooldown.
@@ -38,7 +41,7 @@
 - **Safety and privacy**: Harle should protect user data, keep personal context private, and treat safety as a core product capability.
 - **Human conversation style**: Harle should feel warm, personal, and natural without becoming verbose or performative.
 - **Personal finance**: Harle should help users manage personal finances through natural conversation and connected finance tools.
-- **Productivity support**: Harle should build on internal events with reminders, notifications, or calendar integration when those capabilities have clear ownership and delivery guarantees.
+- **Productivity support**: Harle should build on process-local event notifications with durable delivery, notification preferences, quiet periods, recurrence, or calendar integration when those capabilities have clear ownership and delivery guarantees.
 - **General companionship**: Harle should help the user feel better, reflect, stay organized, and improve their life while staying within healthy assistant boundaries.
 - **Read on request**: Harle may read or query connected tools such as expenses, reminders, or calendar data when the user asks a question.
 - **User-authorized modifications**: Harle may modify expenses, reminders, calendar events, profiles, memories, or other user data when the user directly asks for that modification. If Harle infers, suggests, or initiates a modification itself, it must ask the user first.
@@ -50,9 +53,6 @@
 
 ## Possible Later Features
 
-- **Event kinds**: Internal events may become `user_event` records for the user's real-life agenda or `system_event` records for internal agent reminders and tasks.
-- **Event notification state**: Every event should have a `notification_window_start` and a `notified` boolean. System events should default their notification window to 15 minutes before the event starts.
-- **Agents scheduler**: An `AgentsScheduler` service should check every five minutes for scheduled, unnotified events whose notification window has started but whose event has not started, then wake the owning user's agent to react.
 - **Proactive check-ins**: Harle may follow up on tasks, situations, habits, or emotional context when the user enables it and notification preferences allow it.
 - **External context injectors**: Harle may use cached or polled context providers for data such as weather, location, reminders, calendars, or other user-authorized topics.
 - **Durable background queues**: Harle may use durable queues for scheduled agent wakeups, outbound messages, proposed actions, and integration polling when reliability requires it.

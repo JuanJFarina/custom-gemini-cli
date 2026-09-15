@@ -1,6 +1,7 @@
 from harle_api.settings import ApiSettings
 from harle_services.bootstrap import (
     ProcessRuntime,
+    ProcessRuntimeConfig,
     close_process_runtime,
     create_process_runtime,
 )
@@ -10,9 +11,13 @@ ApiRuntime = ProcessRuntime
 
 async def create_runtime(settings: ApiSettings) -> ApiRuntime:
     return await create_process_runtime(
-        database_url=settings.POSTGRES_DATABASE_URL,
-        pool_min_size=settings.POSTGRES_POOL_MIN_SIZE,
-        pool_max_size=settings.POSTGRES_POOL_MAX_SIZE,
+        ProcessRuntimeConfig(
+            database_url=settings.POSTGRES_DATABASE_URL,
+            pool_min_size=settings.POSTGRES_POOL_MIN_SIZE,
+            pool_max_size=settings.POSTGRES_POOL_MAX_SIZE,
+            telegram_bot_token=settings.TELEGRAM_BOT_TOKEN,
+            scheduler_interval_seconds=settings.EVENT_SCHEDULER_INTERVAL_SECONDS,
+        ),
     )
 
 

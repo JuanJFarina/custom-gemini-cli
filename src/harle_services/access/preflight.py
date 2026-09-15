@@ -98,6 +98,15 @@ class PreflightService:
             quota_reservation=quota,
         )
 
+    async def resolve_active_user(self, user_id: UUID) -> ResolvedUser:
+        resolved_user = await self._accounts.resolve_user_telegram_identity(
+            user_id=user_id,
+        )
+        if resolved_user is None:
+            raise UnknownIdentityError
+        _require_active_subscription(resolved_user, as_utc(self._clock()))
+        return resolved_user
+
     async def release(self, reservation: QuotaReservation) -> None:
         async with self._quota_lock(reservation.user_id):
             reservations = self._reservations.get(reservation.user_id)

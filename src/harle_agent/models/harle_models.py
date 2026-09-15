@@ -20,8 +20,25 @@ from harle_domain.tools.models import (
 
 
 class HarleConfig(BaseModel):
-    model: str = get_agent_settings().GEMINI_MODEL
-    api_key: str = get_agent_settings().GEMINI_API_KEY
+    model: str
+    api_key: str
+    max_loops: int
+
+    @field_validator("max_loops")
+    @classmethod
+    def validate_max_loops(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("Maximum loops must be positive.")
+        return value
+
+
+def default_harle_config() -> HarleConfig:
+    settings = get_agent_settings()
+    return HarleConfig(
+        model=settings.GEMINI_MODEL,
+        api_key=settings.GEMINI_API_KEY,
+        max_loops=settings.MAX_LOOPS,
+    )
 
 
 class HarlePersonalContext(BaseModel):
@@ -67,7 +84,7 @@ HarleThought = Annotated[
     Field(discriminator="action"),
 ]
 
-HarleThoughtAdapter: TypeAdapter[HarleThought] = TypeAdapter(HarleThought)
+HARLE_THOUGHT_ADAPTER: TypeAdapter[HarleThought] = TypeAdapter(HarleThought)
 
 
 class HarleStores(BaseModel):
