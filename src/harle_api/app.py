@@ -1,3 +1,4 @@
+from asyncio import sleep
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -37,6 +38,7 @@ register_exception_handlers(harle_app)
 
 @harle_app.get("/healthcheck")
 async def get_healthcheck() -> JSONResponse:
+    await sleep(20)
     return JSONResponse(content={"status": "OK"})
 
 
