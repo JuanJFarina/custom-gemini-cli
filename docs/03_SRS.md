@@ -50,7 +50,7 @@ This document distinguishes the implemented controlled-beta baseline from target
 - **UR-08 Read on request**: Harle may read or query connected data when the user asks a question and the action does not modify the environment.
 - **UR-09 User-authorized modification**: Harle shall modify data immediately only when the current user message directly requests it. The target product shall require explicit confirmation before executing an inferred or assistant-proposed modification.
 - **UR-10 Personal finance**: Harle shall help users query, add, correct, and understand personal finance data through natural conversation.
-- **UR-11 Productivity support**: Harle shall provide private internal events and process-local Telegram notifications, and may later add durable delivery, notification preferences, recurrence, or external calendar integration.
+- **UR-11 Productivity support**: Harle shall provide private internal events, simple weekly or monthly recurrence, and process-local Telegram notifications, and may later add durable delivery or external calendar integration.
 - **UR-12 Companionship**: Harle shall help users feel better, reflect, stay organized, and improve their lives while respecting healthy relationship boundaries.
 - **UR-13 Proactive support**: The target product shall be able to follow up, remind, or check in when the user has enabled that behavior, the follow-up is useful, and the action respects the user's notification preferences.
 - **UR-14 Privacy and safety**: Harle shall protect user data, minimize unnecessary exposure, and make safety a core product behavior.
@@ -63,7 +63,7 @@ This document distinguishes the implemented controlled-beta baseline from target
 ### Identity, Access, and Subscription
 
 - **FR-01**: The Telegram webhook shall validate Telegram's webhook secret before processing any update.
-- **FR-02**: The system shall extract Telegram chat ID, Telegram user ID, display name, and text from incoming Telegram updates.
+- **FR-02**: The system shall extract Telegram chat ID, Telegram user ID, display name, text, captions, and supported image or audio references from incoming Telegram updates.
 - **FR-03**: The system shall reject empty, unsupported, malformed, unauthorized, or unsubscribed messages without invoking the assistant engine.
 - **FR-04**: The system shall resolve each Telegram sender through a multi-user external-identity registry.
 - **FR-05**: The system shall map each allowed Telegram user to one internal user account.
@@ -80,7 +80,7 @@ This document distinguishes the implemented controlled-beta baseline from target
 - **FR-13**: The assistant shall execute at most a configured number of reasoning and tool loops for one user message.
 - **FR-14**: The assistant shall return a user-facing failure message when model output is invalid, unavailable, or cannot be parsed.
 - **FR-15**: The Telegram runtime shall split long responses into Telegram-compatible message chunks.
-- **FR-16**: The system shall persist the final user prompt and assistant response after each handled conversation.
+- **FR-16**: The system shall persist the final user prompt and assistant response after each handled conversation. A media prompt shall retain a compact attachment marker, caption, and filename when available, but not the raw media bytes.
 
 ### Telegram Intake, Ordering, Bans, and Quotas
 
@@ -145,9 +145,21 @@ This document distinguishes the implemented controlled-beta baseline from target
 - **FR-82**: A process-local `AgentsScheduler` shall run every five minutes and select scheduled events where `notification_status` is `pending`, `notification_window_start` is at or before the current time, and `starts_at` is after the current time.
 - **FR-83**: The scheduler shall wake the owning user's request-scoped agent for every selected event. The agent shall treat user events as agenda context and system events as user-owned scheduled task context.
 - **FR-84**: A pending event shall become `delivered` only after its notification is sent successfully. Disabling notifications shall set `disabled`; re-enabling shall set `pending`; rescheduling an enabled event shall set `pending`; and rescheduling a disabled event shall preserve `disabled`.
-- **FR-85**: Harle shall accept images and voice notes from Telegram as multimodal conversation input and make their interpreted content available to the user-scoped agent.
+- **FR-85**: Harle shall accept supported images, voice notes, and audio files from Telegram as multimodal conversation input and provide their bytes directly to the configured Gemini model.
 - **FR-86**: A future authorized agent tool may invoke a controlled migration or synchronization service to import Google Sheets expenses and Google Calendar events into the internal expense and event systems.
 - **FR-87**: WhatsApp may be added as a later communication channel after the Telegram product and channel-independent runtime boundaries are stable.
+- **FR-88**: A recurring internal event shall remain one event record and shall create no stored occurrence rows. Its `recurrence_rule` shall be either a non-empty list of unique weekdays or a non-empty list of unique month days from 1 through 31. Weekdays imply weekly recurrence and month days imply monthly recurrence.
+- **FR-89**: Recurrence shall be infinite. A month day that does not exist in a particular month shall produce no occurrence in that month.
+- **FR-90**: A recurring event shall preserve the ordinary timed, all-day, multi-day, timezone, type, title, description, and notification-lead behavior. Its stored start and end define the local schedule used for every matching recurrence.
+- **FR-91**: Event reads shall treat a recurring event as one owned event definition. A bounded date-range read shall include it when its recurrence rule produces at least one matching local occurrence in that range.
+- **FR-92**: The target event lifecycle shall use active and disabled event states plus permanent deletion. Disabling an event shall stop its occurrences and notifications until it is re-enabled. The target lifecycle shall not expose cancellation or notification-only enablement as separate states.
+- **FR-93**: A successful recurring notification shall update the event's `last_notified_at`. The scheduler shall send only when the current time is within a computed occurrence's notification window and `last_notified_at` precedes that window. Failed delivery shall not update the field, and an occurrence whose start has passed shall be skipped.
+- **FR-94**: The scheduler shall derive recurring occurrences from the recurrence rule in the event's configured local timezone on each bounded check. It shall maintain no next-occurrence cursor and no per-occurrence notification state.
+- **FR-95**: Media attached to the current Telegram message shall be downloaded and included automatically throughout its Gemini reason-and-act loop. A media attachment from an earlier message shall be loaded only when the agent calls an authorized read-only recent-media tool.
+- **FR-96**: The process-local recent-media store shall retain at most the ten newest Telegram media references per internal user for at least twelve hours on a best-effort basis. Process restart may discard these references, and raw media bytes shall not remain in the store.
+- **FR-97**: The system instruction may expose compact metadata and internal attachment identifiers for available recent media, but shall not expose Telegram file identifiers or raw media. A media tool result shall allow the next Gemini reasoning call to receive the selected media as a native content part.
+- **FR-98**: Unsupported media types, formats, or sizes shall receive a concise Telegram response without invoking the assistant engine or consuming conversation quota. The update shall still follow deduplication policy so a retry does not repeat the rejection response.
+- **FR-99**: Telegram file identifiers shall be treated as sensitive references, excluded from logs and model context, and resolved through Telegram again when recent media is requested. Downloaded bytes shall be discarded after the active model call.
 
 ### Companionship and Safety
 
@@ -172,7 +184,7 @@ This document distinguishes the implemented controlled-beta baseline from target
 - **FR-64**: The tools injector shall select the tool families most likely to help with the current prompt and runtime context instead of always injecting every full tool prompt.
 - **FR-65**: The assistant may receive a compact list of all available tool names for discoverability, but detailed tool descriptions and argument contracts should be limited to the most relevant tools.
 - **FR-66**: Modifying tools shall distinguish direct requests from inferred or proactive actions. The controlled beta enforces this through the assistant instruction; the target runtime shall enforce it through proposed actions.
-- **FR-67**: Future reminder storage shall support user ownership, content, schedule, recurrence if needed, delivery status, cancellation, and links to any originating conversation or proposed action.
+- **FR-67**: Future reminder storage shall support user ownership, content, schedule, delivery status, cancellation, and links to any originating conversation or proposed action. It shall not introduce a second event-recurrence model.
 
 ### Nonfunctional Requirements
 
@@ -201,12 +213,12 @@ Harle is conceptually divided into these program areas:
 - **Assistant engine**: Builds user-scoped context, calls the model, parses structured output, executes available tools, caps tool loops, and returns final text.
 - **Message coordinator**: Deduplicates Telegram updates, aggregates safe consecutive messages, and serializes conflicting work per identity.
 - **Memory and profile stores**: Persist conversations, retrieve bounded context, and store durable user and assistant profile data.
-- **Expense and event stores**: Persist user-owned internal expenses, typed events, notification windows, and delivery state.
+- **Expense and event stores**: Persist user-owned internal expenses, typed events, notification windows, delivery state, and the approved target recurrence definitions and successful-notification timestamps.
 - **Context providers**: Provide current date, time, and weather from user-specific timezone and location inputs.
 - **Tool system**: Defines tool families, effects, argument contracts, authorization, prompt relevance, request-scoped handlers, and structured results.
 - **Preflight services**: Resolve identity and subscription, apply temporary bans, and reserve monthly quota before assistant execution.
 - **Event scheduler**: Selects eligible events every five minutes, wakes the owning active user's agent, sends Telegram notifications, and records successful delivery.
-- **Future runtime services**: Proposed-action, audit, durable delivery, privacy, subscription-synchronization, Google import, and multimodal-input services remain pending.
+- **Future runtime services**: Proposed-action, audit, durable delivery, privacy, subscription-synchronization, Google import, recurring-event, and recent-media services remain pending.
 - **External integrations**: Connects to AI providers, Telegram, PostgreSQL, Google Sheets, future productivity services, weather data, and external account or subscription systems.
 
 The implemented controlled-beta message flow is:
@@ -231,6 +243,25 @@ The implemented scheduled-event flow is:
 5. Harle generates a concise notification without modifying tools or a monthly quota reservation.
 6. Harle sends the notification to the user's private Telegram chat.
 7. The notification becomes delivered after successful delivery. Failed delivery remains pending and eligible until the event starts.
+
+The approved target recurring-event flow is:
+
+1. One internal-event row stores an optional weekly or monthly recurrence rule.
+2. A bounded event read determines whether the rule matches its requested local date range and returns the event definition once.
+3. Every scheduler check derives a relevant local occurrence and notification window without storing that occurrence.
+4. An active event is eligible only while the occurrence remains in the future and `last_notified_at` precedes its computed notification window.
+5. Successful delivery updates `last_notified_at`; failure leaves it unchanged for retry.
+6. Disabling the event suppresses recurrence and notification work, re-enabling resumes it, and deletion permanently removes the row.
+
+The approved target Telegram-media flow is:
+
+1. The webhook parses and claims a supported image or audio update before assistant work.
+2. Unsupported media receives one deduplicated Telegram rejection without invoking Gemini or consuming conversation quota.
+3. Current-message media is downloaded and attached directly to the complete Gemini reason-and-act loop.
+4. The runtime records only its compact prompt marker and stores its sensitive Telegram reference in a user-scoped process-local store.
+5. The system instruction lists recent attachments by internal identifier and metadata.
+6. The agent may call a read-only tool to download and inject one of the ten newest references while it remains within the best-effort twelve-hour window.
+7. Downloaded bytes are discarded after active use.
 
 ## Machine
 
@@ -265,7 +296,8 @@ Open requirements that need product discovery:
 - Exact privacy and legal requirements for storing conversations, profiles, personal history, and finance data.
 - Subscription plan boundaries, usage limits, free trials, failed payments, and cancellation behavior.
 - Telegram authorization UX for approving, cancelling, and expiring proposed modifications.
-- Durable notification delivery, quiet periods, preferences, recurrence, missed-window behavior, and external calendar integration beyond the process-local event capability.
+- Durable notification delivery, quiet periods, and external calendar integration beyond the process-local event capability.
+- The exact supported Telegram media MIME types, file-size limits, and user-facing rejection messages.
 - Data retention, deletion, export, and backup policies.
 - Concrete latency, cost, and reliability targets for paid launch.
 - WhatsApp integration requirements for a later product phase.

@@ -100,8 +100,11 @@ Implemented baseline:
 Remaining goals:
 
 - Add user-controlled memory and profile inspection, correction, refinement, and deletion.
-- Add notification preferences, quiet periods, and bounded proactive check-ins.
-- Add image and voice-note input through Telegram.
+- Add infinite weekly and monthly recurrence to the existing internal-event record without materializing occurrences.
+- Replace the target event lifecycle with active or disabled events plus permanent deletion, and record successful notification time instead of per-occurrence notification state.
+- Add native image, voice-note, and audio input through Telegram, automatically attaching current-message media to the Gemini reasoning loop.
+- Add a read-only recent-media tool backed by a process-local, best-effort store of the ten newest Telegram media references per user for at least twelve hours.
+- Add quiet periods and bounded proactive check-ins only if later product policy requires them.
 - Add an authorized agent tool that invokes a controlled Google expense and calendar import or synchronization service.
 - Add multi-user Google Sheets and Google Calendar through least-privilege OAuth.
 - Define source-of-truth, synchronization, conflict, and revocation behavior before connecting internal and Google data.
@@ -112,7 +115,9 @@ Exit criteria:
 - Each capability has explicit product policy, user ownership, authorization, privacy, and delivery behavior before implementation.
 - New integrations do not expose another user's credentials or data.
 - Proactive behavior remains opt-in and preserves user agency.
-- Images, voice notes, imported records, and scheduled event context remain isolated to the owning user.
+- A recurring event remains one row, supports ordinary event schedules, and delivers at most one notification for each matching occurrence.
+- Current-message media reaches Gemini directly, recent media can be reloaded by internal attachment ID, and unsupported media never invokes the assistant.
+- Images, audio, imported records, and scheduled event context remain isolated to the owning user.
 
 ## Infrastructure and Cost
 
@@ -130,6 +135,9 @@ Exit criteria:
 - **Duplicate or lost Telegram work**: Use stable update-derived keys, durable queues, leases, and per-user ordering.
 - **Process-count drift**: Enforce one-process deployment until coordination state becomes distributed.
 - **Sensitive logging**: Use structured allowlisted fields and test that protected content is absent.
+- **Recurring notification duplication**: Compare `last_notified_at` with the computed occurrence window and update it only after successful Telegram delivery.
+- **Sensitive media references**: Keep Telegram file identifiers out of logs and model context, retain no raw bytes after active use, and scope every recent-media lookup by internal user UUID.
+- **Ephemeral media loss**: Treat the twelve-hour process-local media window as best-effort and allow restart to discard it.
 - **Unresolved policy implemented as code**: Block the affected phase until the product decision is recorded in Features or the SRS.
 
 ## Open Product Decisions
@@ -141,9 +149,8 @@ Exit criteria:
 - Future expense currencies, category customization, and export semantics
 - Whether Juan may move from legacy Sheets to internal expenses and how existing data would be handled
 - Memory consent and automatic learning policy
-- Reminder recurrence, notification preferences, and quiet periods
-- Behavior when scheduler downtime causes an event notification window to be missed
+- Proactive check-in preferences and quiet periods
 - System-event creation permissions and supported task payloads
-- Image and voice-note size, retention, transcription, and unsupported-media behavior
+- Supported Telegram image and audio MIME types, file-size limits, and rejection messages
 - Internal versus Google source-of-truth and synchronization rules
 - Exact service-level targets, metrics, and alert thresholds

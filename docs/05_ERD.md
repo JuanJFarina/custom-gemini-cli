@@ -188,10 +188,26 @@ erDiagram
 - Telegram claims use `update_id` as the primary deduplication key and are indexed by status and update time.
 - User-owned entities cascade when their owning user is physically deleted, subject to the future retention and deletion policy.
 
+## Approved Target Event Evolution
+
+The recurrence implementation shall extend `INTERNAL_EVENT` rather than introduce series or occurrence entities.
+
+- `recurrence_rule` is nullable. Absence identifies a one-time event.
+- A weekly rule contains one or more unique weekdays. A monthly rule contains one or more unique month days from 1 through 31.
+- The rule shape identifies weekly or monthly recurrence without a separate frequency field.
+- Recurrence is infinite. A requested month day that does not exist in a month produces no occurrence for that month.
+- `starts_at`, `ends_at`, `timezone`, and `all_day` define the local schedule applied to every recurrence.
+- A recurring event remains one row and date-range reads return the owned event definition when at least one occurrence matches the range.
+- The target event status is `active` or `disabled`. Re-enabling resumes recurrence; permanent deletion removes the row.
+- `last_notified_at` replaces per-occurrence delivery state in the target model and changes only after successful Telegram delivery.
+- The scheduler computes each matching occurrence and its notification window from the event definition. It stores no occurrence rows and no next-occurrence cursor.
+
+Recent Telegram media remains outside the PostgreSQL ERD while its twelve-hour retention is best-effort. The process-local store contains only user-scoped Telegram references and compact metadata, never raw image or audio bytes.
+
 ## Out Of Scope For This ERD
 
 - Proposed actions and action audits
 - Durable Telegram inbox and outbox queues
-- Recurrence, notification preferences, and durable scheduler or delivery records
+- Notification preferences and durable scheduler or delivery records
 - OAuth credentials and multi-user Google integrations
 - External registration, payment, and web-interface data

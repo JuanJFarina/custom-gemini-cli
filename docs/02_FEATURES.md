@@ -41,7 +41,13 @@
 - **Safety and privacy**: Harle should protect user data, keep personal context private, and treat safety as a core product capability.
 - **Human conversation style**: Harle should feel warm, personal, and natural without becoming verbose or performative.
 - **Personal finance**: Harle should help users manage personal finances through natural conversation and connected finance tools.
-- **Productivity support**: Harle should build on process-local event notifications with durable delivery, notification preferences, quiet periods, recurrence, or calendar integration when those capabilities have clear ownership and delivery guarantees.
+- **Productivity support**: Harle should build on simple recurring events and process-local notifications with durable delivery, quiet periods, or calendar integration when those capabilities have clear ownership and delivery guarantees.
+- **Simple recurring events**: An internal event may repeat forever on one or more weekdays or one or more days of the month. The recurrence remains one event record, keeps the ordinary event fields and behavior, and creates no stored occurrence rows.
+- **Recurring-event lifecycle**: Recurring events may be edited like ordinary events, disabled and later re-enabled, or permanently deleted. Changes apply to the complete event definition.
+- **Recurring notifications**: The scheduler should derive occurrences from the event's local schedule and recurrence rule, send at most one notification for each matching occurrence, and record the successful delivery time without maintaining per-occurrence notification state.
+- **Native Telegram media input**: Harle should accept supported Telegram images, voice notes, and audio files and provide their bytes directly to the configured multimodal model rather than reducing them to a transcript or image description first.
+- **Recent Telegram media**: Current-message media should be attached automatically. A process-local, best-effort store should retain up to ten recent Telegram media references per user for at least twelve hours so the agent can load an earlier attachment through a read-only tool.
+- **Media conversation history**: Conversation history should store a compact attachment marker, caption, and filename when available, but should not store raw image or audio bytes.
 - **General companionship**: Harle should help the user feel better, reflect, stay organized, and improve their life while staying within healthy assistant boundaries.
 - **Read on request**: Harle may read or query connected tools such as expenses, reminders, or calendar data when the user asks a question.
 - **User-authorized modifications**: Harle may modify expenses, reminders, calendar events, profiles, memories, or other user data when the user directly asks for that modification. If Harle infers, suggests, or initiates a modification itself, it must ask the user first.
@@ -58,7 +64,6 @@
 - **Durable background queues**: Harle may use durable queues for scheduled agent wakeups, outbound messages, proposed actions, and integration polling when reliability requires it.
 - **Google import and synchronization**: An authorized agent tool may invoke a controlled migration or synchronization service that imports Google Sheets expenses and Google Calendar events into Harle's internal systems.
 - **Multi-user Google integrations**: Users may connect Google Sheets or Google Calendar through OAuth with encrypted, revocable credentials after source-of-truth, import, and synchronization rules are defined.
-- **Multimodal Telegram input**: Harle should understand images and voice notes sent through Telegram and use them as context for conversation and authorized tools.
 - **WhatsApp integration**: Harle should eventually support WhatsApp because of its broader market reach.
 - **Additional communication channels**: Harle may later support voice, email, or native mobile surfaces if they improve everyday access.
 - **Broader personal integrations**: Harle may integrate with email, notes, documents, task managers, banking exports, health data, or other services that help manage the user's life.
