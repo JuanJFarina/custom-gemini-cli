@@ -20,6 +20,7 @@ from harle_utils import (
     MessageDeliveryError,
     MissingProfileError,
     UnknownIdentityError,
+    log,
 )
 
 PROCESSING_FAILURES = (*ASSISTANT_FAILURES, OSError, PostgresError)
@@ -130,7 +131,8 @@ async def _run_admitted_turn(
             ):
                 continue
             raise
-        except PROCESSING_FAILURES:
+        except PROCESSING_FAILURES as exc:
+            log.warning("Turn generation failed: %s", type(exc).__name__)
             return await coordinator.finish_failed(
                 telegram_user_id=telegram_user_id,
                 retryable=True,

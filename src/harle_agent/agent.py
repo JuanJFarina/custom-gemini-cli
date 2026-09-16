@@ -117,6 +117,7 @@ class Harle(BaseModel):
         )
 
         if harle_thought.action == "respond":
+            log.info(f"Harle thought to respond")
             if not harle_thought.response:
                 log.warning("Action is respond but response is empty")
             return HarleRunResult(
@@ -127,6 +128,7 @@ class Harle(BaseModel):
             )
 
         if harle_thought.action == "call_tool":
+            log.info("Harle thought to call tools")
             results = await self._call_tools_in_batches(harle_thought.calls)
             interaction = InternalToolCallInteraction(
                 tool_calls=harle_thought.calls,
@@ -194,6 +196,7 @@ class Harle(BaseModel):
         results: list[ToolCallResult] = []
         concurrent_calls: list[ToolCall] = []
         for call in calls:
+            log.info(f"Calling tool: {call.tool_name}")
             tool = self.stores.tool_store.get(call.tool_name)
             if tool.can_run_concurrently:
                 concurrent_calls.append(call)
