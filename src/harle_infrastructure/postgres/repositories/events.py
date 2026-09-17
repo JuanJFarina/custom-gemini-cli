@@ -8,9 +8,12 @@ import asyncpg
 from harle_domain.events import (
     EventDetails,
     EventInterval,
+    EventNotification,
     EventStatus,
     EventTimestamps,
+    EventType,
     InternalEvent,
+    NotificationStatus,
 )
 
 EVENT_COLUMNS = """
@@ -22,7 +25,10 @@ EVENT_COLUMNS = """
     ends_at,
     timezone,
     all_day,
+    event_type,
     status,
+    notification_window_start,
+    notification_status,
     created_at,
     updated_at,
     cancelled_at
@@ -54,14 +60,17 @@ class PostgresEventRepository:
                     ends_at,
                     timezone,
                     all_day,
+                    event_type,
                     status,
+                    notification_window_start,
+                    notification_status,
                     created_at,
                     updated_at,
                     cancelled_at
                 )
                 VALUES (
                     $1, $2, $3, $4, $5, $6, $7,
-                    $8, $9, $10, $11, $12
+                    $8, $9, $10, $11, $12, $13, $14, $15
                 )
                 RETURNING {EVENT_COLUMNS}
                 """,
@@ -73,7 +82,10 @@ class PostgresEventRepository:
                 event.ends_at,
                 event.timezone,
                 event.all_day,
+                event.event_type.value,
                 event.status.value,
+                event.notification_window_start,
+                event.notification_status.value,
                 event.created_at,
                 event.updated_at,
                 event.cancelled_at,
@@ -138,6 +150,33 @@ class PostgresEventRepository:
             )
         return [_event_from_row(row) for row in rows]
 
+    async def list_due_for_notification(
+        self,
+        *,
+        current_time: datetime,
+        limit: int,
+    ) -> Sequence[InternalEvent]:
+        if current_time.tzinfo is None or current_time.utcoffset() is None:
+            raise ValueError("Current time must include a timezone.")
+        if limit <= 0:
+            raise ValueError("Due event limit must be positive.")
+        async with self.pool.acquire() as connection:
+            rows = await connection.fetch(
+                f"""
+                SELECT {EVENT_COLUMNS}
+                FROM internal_events
+                WHERE status = 'scheduled'
+                    AND notification_status = 'pending'
+                    AND notification_window_start <= $1
+                    AND starts_at > $1
+                ORDER BY notification_window_start, starts_at, id
+                LIMIT $2
+                """,
+                current_time,
+                limit,
+            )
+        return [_event_from_row(row) for row in rows]
+
     async def update(
         self,
         *,
@@ -157,7 +196,10 @@ class PostgresEventRepository:
                     ends_at = $6,
                     timezone = $7,
                     all_day = $8,
-                    updated_at = $9
+                    event_type = $9,
+                    notification_window_start = $10,
+                    notification_status = $11,
+                    updated_at = $12
                 WHERE id = $1
                     AND user_id = $2
                     AND status = 'scheduled'
@@ -171,7 +213,38 @@ class PostgresEventRepository:
                 event.ends_at,
                 event.timezone,
                 event.all_day,
+                event.event_type.value,
+                event.notification_window_start,
+                event.notification_status.value,
                 event.updated_at,
+            )
+        return _event_from_row(row) if row is not None else None
+
+    async def mark_notification_delivered(
+        self,
+        *,
+        user_id: UUID,
+        event_id: UUID,
+        expected_updated_at: datetime,
+        updated_at: datetime,
+    ) -> InternalEvent | None:
+        async with self.pool.acquire() as connection:
+            row = await connection.fetchrow(
+                f"""
+                UPDATE internal_events
+                SET notification_status = 'delivered',
+                    updated_at = $4
+                WHERE id = $1
+                    AND user_id = $2
+                    AND status = 'scheduled'
+                    AND notification_status = 'pending'
+                    AND updated_at = $3
+                RETURNING {EVENT_COLUMNS}
+                """,
+                event_id,
+                user_id,
+                expected_updated_at,
+                updated_at,
             )
         return _event_from_row(row) if row is not None else None
 
@@ -234,7 +307,12 @@ def _event_from_row(row: asyncpg.Record) -> InternalEvent:
                 timezone=_text(row, "timezone"),
                 all_day=_boolean(row, "all_day"),
             ),
+            event_type=EventType(_text(row, "event_type")),
             status=EventStatus(_text(row, "status")),
+        ),
+        notification=EventNotification(
+            window_start=_datetime(row, "notification_window_start"),
+            status=NotificationStatus(_text(row, "notification_status")),
         ),
         timestamps=EventTimestamps(
             created_at=_datetime(row, "created_at"),

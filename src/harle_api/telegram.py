@@ -1,11 +1,6 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-import httpx
-
-TELEGRAM_API_BASE_URL = "https://api.telegram.org"
-TELEGRAM_MESSAGE_LIMIT = 4096
-
 
 @dataclass(frozen=True)
 class IncomingTelegramMessage:
@@ -48,49 +43,6 @@ def extract_text_message(
         user_name=_display_name(from_user, fallback=f"Telegram user {user_id}"),
         text=text.strip(),
     )
-
-
-async def send_typing_action(*, bot_token: str, chat_id: int) -> None:
-    await _post_telegram_method(
-        bot_token=bot_token,
-        method="sendChatAction",
-        payload={"chat_id": chat_id, "action": "typing"},
-    )
-
-
-async def send_message(*, bot_token: str, chat_id: int, text: str) -> None:
-    chunks = list(_chunk_message(text or "I could not generate a response."))
-    for chunk in chunks:
-        await _post_telegram_method(
-            bot_token=bot_token,
-            method="sendMessage",
-            payload={"chat_id": chat_id, "text": chunk},
-        )
-
-
-async def _post_telegram_method(
-    *,
-    bot_token: str,
-    method: str,
-    payload: Mapping[str, object],
-) -> None:
-    url = f"{TELEGRAM_API_BASE_URL}/bot{bot_token}/{method}"
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.post(url, json=dict(payload))
-        response.raise_for_status()
-
-
-def _chunk_message(text: str) -> list[str]:
-    if len(text) <= TELEGRAM_MESSAGE_LIMIT:
-        return [text]
-
-    chunks: list[str] = []
-    remaining = text
-    while remaining:
-        chunks.append(remaining[:TELEGRAM_MESSAGE_LIMIT])
-        remaining = remaining[TELEGRAM_MESSAGE_LIMIT:]
-
-    return chunks
 
 
 def _parse_update_id(value: object) -> int | None:

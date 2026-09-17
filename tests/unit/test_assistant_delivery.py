@@ -2,15 +2,16 @@ import asyncio
 from types import SimpleNamespace
 from typing import cast
 
-import httpx
 from pytest import MonkeyPatch
 
 import harle_api.assistant as assistant_module
+from harle_agent.agent import Harle
 from harle_agent.models import HarleRunResult
-from harle_api.settings import ApiSettings
+from harle_domain.messaging import OutboundMessenger
 from harle_services.messaging import MessageCoordinator, MessageFragment, MessageTurn
 from harle_services.runtime import UserRuntime
 from harle_services.tools import ToolsInjector
+from harle_utils import MessageDeliveryError
 
 
 class FakeHarle:
@@ -47,6 +48,15 @@ class FakeCoordinator:
         return False
 
 
+class FailingMessenger:
+    async def send_typing_action(self, *, chat_id: int) -> None:
+        del chat_id
+
+    async def send_message(self, *, chat_id: int, text: str) -> None:
+        del chat_id, text
+        raise MessageDeliveryError
+
+
 def test_failed_telegram_delivery_does_not_persist_completion(
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -62,19 +72,11 @@ def test_failed_telegram_delivery_does_not_persist_completion(
 
         async def generate_response(**_: object) -> object:
             return assistant_module._GeneratedTurn(
-                harle=cast(assistant_module.Harle, harle),
+                harle=cast(Harle, harle),
                 result=HarleRunResult(response_text="Hi"),
             )
 
-        async def do_nothing(**_: object) -> None:
-            return None
-
-        async def fail_delivery(**_: object) -> None:
-            raise httpx.ConnectError("delivery failed")
-
         monkeypatch.setattr(assistant_module, "_generate_response", generate_response)
-        monkeypatch.setattr(assistant_module, "send_typing_action", do_nothing)
-        monkeypatch.setattr(assistant_module, "send_message", fail_delivery)
 
         await assistant_module._run_admitted_turn(
             telegram_user_id=1,
@@ -84,10 +86,7 @@ def test_failed_telegram_delivery_does_not_persist_completion(
             ),
             coordinator=cast(MessageCoordinator, coordinator),
             tools=cast(ToolsInjector, object()),
-            settings=cast(
-                ApiSettings,
-                SimpleNamespace(TELEGRAM_BOT_TOKEN="token"),
-            ),
+            messenger=cast(OutboundMessenger, FailingMessenger()),
         )
 
         assert not harle.saved

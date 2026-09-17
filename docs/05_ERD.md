@@ -120,7 +120,10 @@ erDiagram
         TIMESTAMPTZ ends_at
         TEXT timezone
         BOOLEAN all_day
+        TEXT event_type
         TEXT status
+        TIMESTAMPTZ notification_window_start
+        TEXT notification_status
         TIMESTAMPTZ created_at
         TIMESTAMPTZ updated_at
         TIMESTAMPTZ cancelled_at
@@ -169,8 +172,11 @@ erDiagram
 ### Internal Events
 
 - Event status is `scheduled` or `cancelled`.
+- Event type is `user_event` for the user's agenda or `system_event` for an internal assistant reminder or task.
 - Start and end are stored in UTC while the originating IANA timezone is preserved.
 - End must follow start. All-day events use local-midnight boundaries.
+- Notification windows must start before the event. Both event types enable notifications by default with a 15-minute lead, and zero resets a configured lead to that default.
+- Notification status is `disabled`, `pending`, or `delivered`. Successful delivery changes `pending` to `delivered`; disabling changes any state to `disabled`; re-enabling changes `disabled` to `pending`; and rescheduling preserves `disabled` or resets an enabled event to `pending`.
 - Cancellation retains the event and records `cancelled_at`; deletion permanently removes it.
 
 ## Indexes and Constraints
@@ -178,14 +184,30 @@ erDiagram
 - Conversations are indexed by user, chat, creation time, kind, status, and monthly quota range.
 - Delivered conversation update IDs and update-plus-tool-interaction identifiers are unique when present.
 - Expenses are indexed by user and transaction date, category, and installment group.
-- Events are indexed by user, status, and start time.
+- Events are indexed by user, status, and start time, with a partial index for scheduled pending notifications ordered by notification window.
 - Telegram claims use `update_id` as the primary deduplication key and are indexed by status and update time.
 - User-owned entities cascade when their owning user is physically deleted, subject to the future retention and deletion policy.
+
+## Approved Target Event Evolution
+
+The recurrence implementation shall extend `INTERNAL_EVENT` rather than introduce series or occurrence entities.
+
+- `recurrence_rule` is nullable. Absence identifies a one-time event.
+- A weekly rule contains one or more unique weekdays. A monthly rule contains one or more unique month days from 1 through 31.
+- The rule shape identifies weekly or monthly recurrence without a separate frequency field.
+- Recurrence is infinite. A requested month day that does not exist in a month produces no occurrence for that month.
+- `starts_at`, `ends_at`, `timezone`, and `all_day` define the local schedule applied to every recurrence.
+- A recurring event remains one row and date-range reads return the owned event definition when at least one occurrence matches the range.
+- The target event status is `active` or `disabled`. Re-enabling resumes recurrence; permanent deletion removes the row.
+- `last_notified_at` replaces per-occurrence delivery state in the target model and changes only after successful Telegram delivery.
+- The scheduler computes each matching occurrence and its notification window from the event definition. It stores no occurrence rows and no next-occurrence cursor.
+
+Recent Telegram media remains outside the PostgreSQL ERD while its twelve-hour retention is best-effort. The process-local store contains only user-scoped Telegram references and compact metadata, never raw image or audio bytes.
 
 ## Out Of Scope For This ERD
 
 - Proposed actions and action audits
 - Durable Telegram inbox and outbox queues
-- Reminders, recurrence, notifications, and scheduler runs
+- Notification preferences and durable scheduler or delivery records
 - OAuth credentials and multi-user Google integrations
 - External registration, payment, and web-interface data

@@ -1,3 +1,4 @@
+from asyncio import sleep
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -11,7 +12,7 @@ from harle_api.assistant import process_telegram_messages
 from harle_api.exception_handlers import register_exception_handlers
 from harle_api.runtime import ApiRuntime, close_runtime, create_runtime
 from harle_api.settings import get_settings
-from harle_api.telegram import extract_text_message, send_message
+from harle_api.telegram import extract_text_message
 from harle_services.messaging import MessageSubmissionStatus
 
 
@@ -19,6 +20,7 @@ from harle_services.messaging import MessageSubmissionStatus
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     runtime = await create_runtime(get_settings())
     app.state.runtime = runtime
+    runtime.scheduler.start()
     try:
         yield
     finally:
@@ -36,6 +38,7 @@ register_exception_handlers(harle_app)
 
 @harle_app.get("/healthcheck")
 async def get_healthcheck() -> JSONResponse:
+    await sleep(20)
     return JSONResponse(content={"status": "OK"})
 
 
@@ -71,8 +74,7 @@ async def post_telegram_webhook(
         retry_at = _utc_boundary(temporary_ban.blocked_until)
         if temporary_ban.notify_user:
             background_tasks.add_task(
-                send_message,
-                bot_token=settings.TELEGRAM_BOT_TOKEN,
+                runtime.messenger.send_message,
                 chat_id=message.chat_id,
                 text=f"You're sending messages too quickly. Try again after {retry_at}.",
             )

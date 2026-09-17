@@ -10,6 +10,17 @@ class EventStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class EventType(str, Enum):
+    USER_EVENT = "user_event"
+    SYSTEM_EVENT = "system_event"
+
+
+class NotificationStatus(str, Enum):
+    DISABLED = "disabled"
+    PENDING = "pending"
+    DELIVERED = "delivered"
+
+
 @dataclass(frozen=True, slots=True)
 class EventInterval:
     starts_at: datetime
@@ -38,6 +49,7 @@ class EventDetails:
     title: str
     description: str
     interval: EventInterval
+    event_type: EventType
     status: EventStatus
 
     def __post_init__(self) -> None:
@@ -59,13 +71,25 @@ class EventTimestamps:
 
 
 @dataclass(frozen=True, slots=True)
+class EventNotification:
+    window_start: datetime
+    status: NotificationStatus
+
+    def __post_init__(self) -> None:
+        _require_utc(self.window_start, "Event notification window start")
+
+
+@dataclass(frozen=True, slots=True)
 class InternalEvent:
     id: UUID
     user_id: UUID
     details: EventDetails
+    notification: EventNotification
     timestamps: EventTimestamps
 
     def __post_init__(self) -> None:
+        if self.notification_window_start >= self.starts_at:
+            raise ValueError("Event notification window must start before the event.")
         if self.status is EventStatus.SCHEDULED and self.cancelled_at is not None:
             raise ValueError("A scheduled event cannot have a cancellation time.")
         if self.status is EventStatus.CANCELLED and self.cancelled_at is None:
@@ -96,8 +120,24 @@ class InternalEvent:
         return self.details.interval.all_day
 
     @property
+    def event_type(self) -> EventType:
+        return self.details.event_type
+
+    @property
     def status(self) -> EventStatus:
         return self.details.status
+
+    @property
+    def notification_window_start(self) -> datetime:
+        return self.notification.window_start
+
+    @property
+    def notification_status(self) -> NotificationStatus:
+        return self.notification.status
+
+    @property
+    def notifications_enabled(self) -> bool:
+        return self.notification_status is not NotificationStatus.DISABLED
 
     @property
     def created_at(self) -> datetime:

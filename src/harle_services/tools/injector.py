@@ -4,6 +4,7 @@ from uuid import UUID
 
 from harle_domain.accounts import ResolvedUser
 from harle_domain.tools import HarleToolStore, ToolFamily
+from harle_utils import log
 
 from .authorization import ToolAccessPolicy
 from .registry import ToolRegistry
@@ -68,6 +69,12 @@ class ToolsInjector:
     ) -> HarleToolStore:
         authorized = self.access_policy.authorized_families(context.resolved_user)
         families = _relevant_families(context.prompt, authorized)
+        log.info(
+            "Injecting tool families %s from authorized %s and registered %s",
+            families,
+            authorized,
+            self.registry.families,
+        )
         return self.registry.build_store(
             user_id=context.resolved_user.user.id,
             timezone=context.timezone,

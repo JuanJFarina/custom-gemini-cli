@@ -12,6 +12,28 @@ from harle_domain.accounts.models import (
     User,
 )
 
+RESOLVED_USER_COLUMNS = """
+    users.id AS user_id,
+    users.display_name AS user_display_name,
+    users.plan_code,
+    users.subscription_status,
+    users.subscription_valid_until,
+    users.subscription_synced_at,
+    users.created_at AS user_created_at,
+    users.updated_at AS user_updated_at,
+    plans.monthly_request_limit,
+    plans.active AS plan_active,
+    plans.created_at AS plan_created_at,
+    plans.updated_at AS plan_updated_at,
+    identities.id AS identity_id,
+    identities.user_id AS identity_user_id,
+    identities.provider,
+    identities.external_user_id,
+    identities.display_name AS identity_display_name,
+    identities.created_at AS identity_created_at,
+    identities.updated_at AS identity_updated_at
+"""
+
 
 @dataclass(frozen=True, slots=True)
 class PostgresAccountRepository:
@@ -27,27 +49,8 @@ class PostgresAccountRepository:
 
         async with self.pool.acquire() as connection:
             row = await connection.fetchrow(
-                """
-                SELECT
-                    users.id AS user_id,
-                    users.display_name AS user_display_name,
-                    users.plan_code,
-                    users.subscription_status,
-                    users.subscription_valid_until,
-                    users.subscription_synced_at,
-                    users.created_at AS user_created_at,
-                    users.updated_at AS user_updated_at,
-                    plans.monthly_request_limit,
-                    plans.active AS plan_active,
-                    plans.created_at AS plan_created_at,
-                    plans.updated_at AS plan_updated_at,
-                    identities.id AS identity_id,
-                    identities.user_id AS identity_user_id,
-                    identities.provider,
-                    identities.external_user_id,
-                    identities.display_name AS identity_display_name,
-                    identities.created_at AS identity_created_at,
-                    identities.updated_at AS identity_updated_at
+                f"""
+                SELECT {RESOLVED_USER_COLUMNS}
                 FROM external_identities AS identities
                 JOIN users ON users.id = identities.user_id
                 JOIN plans ON plans.code = users.plan_code
@@ -60,46 +63,71 @@ class PostgresAccountRepository:
         if row is None:
             return None
 
-        user_id = _uuid(row, "user_id")
-        return ResolvedUser(
-            user=User(
-                id=user_id,
-                display_name=_text(row, "user_display_name"),
-                plan_code=_text(row, "plan_code"),
-                subscription_status=SubscriptionStatus(
-                    _text(row, "subscription_status"),
-                ),
-                subscription_valid_until=_optional_datetime(
-                    row,
-                    "subscription_valid_until",
-                ),
-                subscription_synced_at=_optional_datetime(
-                    row,
-                    "subscription_synced_at",
-                ),
-                created_at=_datetime(row, "user_created_at"),
-                updated_at=_datetime(row, "user_updated_at"),
+        return _resolved_user_from_row(row)
+
+    async def resolve_user_telegram_identity(
+        self,
+        *,
+        user_id: UUID,
+    ) -> ResolvedUser | None:
+        async with self.pool.acquire() as connection:
+            row = await connection.fetchrow(
+                f"""
+                SELECT {RESOLVED_USER_COLUMNS}
+                FROM external_identities AS identities
+                JOIN users ON users.id = identities.user_id
+                JOIN plans ON plans.code = users.plan_code
+                WHERE identities.provider = 'telegram'
+                    AND users.id = $1
+                ORDER BY identities.created_at, identities.id
+                LIMIT 1
+                """,
+                user_id,
+            )
+        return _resolved_user_from_row(row) if row is not None else None
+
+
+def _resolved_user_from_row(row: asyncpg.Record) -> ResolvedUser:
+    user_id = _uuid(row, "user_id")
+    return ResolvedUser(
+        user=User(
+            id=user_id,
+            display_name=_text(row, "user_display_name"),
+            plan_code=_text(row, "plan_code"),
+            subscription_status=SubscriptionStatus(
+                _text(row, "subscription_status"),
             ),
-            plan=Plan(
-                code=_text(row, "plan_code"),
-                monthly_request_limit=_integer(
-                    row,
-                    "monthly_request_limit",
-                ),
-                active=_boolean(row, "plan_active"),
-                created_at=_datetime(row, "plan_created_at"),
-                updated_at=_datetime(row, "plan_updated_at"),
+            subscription_valid_until=_optional_datetime(
+                row,
+                "subscription_valid_until",
             ),
-            identity=ExternalIdentity(
-                id=_uuid(row, "identity_id"),
-                user_id=_uuid(row, "identity_user_id"),
-                provider=_text(row, "provider"),
-                external_user_id=_text(row, "external_user_id"),
-                display_name=_text(row, "identity_display_name"),
-                created_at=_datetime(row, "identity_created_at"),
-                updated_at=_datetime(row, "identity_updated_at"),
+            subscription_synced_at=_optional_datetime(
+                row,
+                "subscription_synced_at",
             ),
-        )
+            created_at=_datetime(row, "user_created_at"),
+            updated_at=_datetime(row, "user_updated_at"),
+        ),
+        plan=Plan(
+            code=_text(row, "plan_code"),
+            monthly_request_limit=_integer(
+                row,
+                "monthly_request_limit",
+            ),
+            active=_boolean(row, "plan_active"),
+            created_at=_datetime(row, "plan_created_at"),
+            updated_at=_datetime(row, "plan_updated_at"),
+        ),
+        identity=ExternalIdentity(
+            id=_uuid(row, "identity_id"),
+            user_id=_uuid(row, "identity_user_id"),
+            provider=_text(row, "provider"),
+            external_user_id=_text(row, "external_user_id"),
+            display_name=_text(row, "identity_display_name"),
+            created_at=_datetime(row, "identity_created_at"),
+            updated_at=_datetime(row, "identity_updated_at"),
+        ),
+    )
 
 
 def _text(row: asyncpg.Record, key: str) -> str:
