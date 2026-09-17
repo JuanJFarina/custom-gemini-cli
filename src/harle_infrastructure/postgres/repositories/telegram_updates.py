@@ -168,6 +168,16 @@ class PostgresTelegramUpdateRepository:
             ),
         )
 
+    async def mark_rejected(self, update_ids: Sequence[int]) -> None:
+        await self._set_state(
+            update_ids,
+            state=TelegramUpdateState.REJECTED,
+            allowed=(
+                TelegramUpdateState.RECEIVED,
+                TelegramUpdateState.REJECTED,
+            ),
+        )
+
     async def _set_state(
         self,
         update_ids: Sequence[int],

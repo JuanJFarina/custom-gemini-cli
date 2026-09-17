@@ -31,8 +31,9 @@ This document distinguishes the implemented controlled-beta baseline from target
 - PostgreSQL stores Telegram conversations, tool interactions, profiles, personal history, internal expenses, internal events, and Telegram update claims.
 - Tool authorization gives commercial users internal expenses and events. Juan receives internal events and legacy Google Sheets expenses instead of internal expenses.
 - Commercial expenses use Argentine pesos, fixed categories, permanent deletion, and transaction UUIDs. Updating or deleting one installment affects its complete installment group.
-- Internal events are private, one-time timed or all-day `user_event` or `system_event` records. Cancellation retains an event; deletion is permanent.
-- Every event has a notification window and status `disabled`, `pending`, or `delivered`. A process-local scheduler wakes the owning active user's agent every five minutes for pending events and marks the notification delivered after successful Telegram delivery.
+- Internal events are private timed or all-day `user_event` or `system_event` records. They may be one-time, repeat weekly on `week_days`, or repeat monthly on `month_days`; disabling is reversible and deletion is permanent.
+- Every event has a notification window and optional `last_notified_at`. A process-local scheduler wakes the owning active user's agent every five minutes for due one-time or derived recurring occurrences and records successful delivery.
+- Supported Telegram images, voice notes, and audio files are sent directly to Gemini. The ten newest user-owned Telegram references remain available through a read-only tool for twelve hours on a best-effort process-local basis.
 - Telegram updates are persisted and deduplicated before assistant execution. Consecutive messages may join a turn until tool execution or delivery begins.
 - The tenth valid message within two seconds triggers a per-identity cooldown. Cooldowns escalate from 60 seconds to 5 minutes and then 1 hour, and strikes decay after normal use.
 - Monthly quotas count successful completed conversations within UTC month boundaries and include process-local in-flight reservations. Configured plan limits, rather than application constants, determine allowance.
@@ -135,31 +136,32 @@ This document distinguishes the implemented controlled-beta baseline from target
 
 ### Productivity
 
-- **FR-44**: The controlled beta shall provide private, one-time internal events with process-local notifications to every entitled user.
-- **FR-45**: Harle shall list owned events overlapping a bounded local date range, excluding cancelled events unless the user requests them.
-- **FR-46**: Harle shall create, update, cancel, or permanently delete only events owned by the requesting user and only when the current message directly requests the modification.
+- **FR-44**: The controlled beta shall provide private one-time, weekly, or monthly internal events with process-local notifications to every entitled user.
+- **FR-45**: Harle shall list owned events overlapping a bounded local date range, excluding disabled events unless the user requests them.
+- **FR-46**: Harle shall create, update, disable, re-enable, or permanently delete only events owned by the requesting user and only when the current message directly requests the modification.
 - **FR-47**: Events shall support timed and all-day schedules, preserve the originating IANA timezone, store UTC boundaries, and require the end to follow the start.
-- **FR-48**: Controlled-beta events shall create no recurrence, attendees, external synchronization, quiet-period behavior, or durable background work. Later reminder or calendar integrations shall be user-scoped, revocable, and governed by the target authorization policy.
+- **FR-48**: Controlled-beta events shall create no attendees, external synchronization, quiet-period behavior, or durable background work. Later reminder or calendar integrations shall be user-scoped, revocable, and governed by the target authorization policy.
 - **FR-80**: Internal events shall have type `user_event` or `system_event`. User events represent the user's real-life agenda; system events represent internal reminders or tasks for the agent.
-- **FR-81**: Every event shall have `notification_window_start` and `notification_status`, whose allowed values are `disabled`, `pending`, and `delivered`. Both event types shall enable notifications by default with a 15-minute lead, zero shall select that default, and positive values shall configure a custom lead.
-- **FR-82**: A process-local `AgentsScheduler` shall run every five minutes and select scheduled events where `notification_status` is `pending`, `notification_window_start` is at or before the current time, and `starts_at` is after the current time.
+- **FR-81**: Every event shall have `notification_window_start` and optional `last_notified_at`. Both event types shall use a 15-minute lead by default, zero shall select that default, and positive values shall configure a custom lead.
+- **FR-82**: A process-local `AgentsScheduler` shall run every five minutes and select active one-time events whose notification window is open and active recurring definitions that may produce a due local occurrence.
 - **FR-83**: The scheduler shall wake the owning user's request-scoped agent for every selected event. The agent shall treat user events as agenda context and system events as user-owned scheduled task context.
-- **FR-84**: A pending event shall become `delivered` only after its notification is sent successfully. Disabling notifications shall set `disabled`; re-enabling shall set `pending`; rescheduling an enabled event shall set `pending`; and rescheduling a disabled event shall preserve `disabled`.
-- **FR-85**: Harle shall accept supported images, voice notes, and audio files from Telegram as multimodal conversation input and provide their bytes directly to the configured Gemini model.
+- **FR-84**: A successful notification shall update `last_notified_at`. Failed delivery shall leave it unchanged for retry, disabling an event shall suppress all occurrences, and re-enabling shall resume them.
+- **FR-85**: Harle shall accept supported images, voice notes, and ordinary Telegram audio messages as multimodal conversation input and provide their bytes directly to the configured Gemini model. Voice notes are the primary audio target, and audio sent as a generic document may remain unsupported.
 - **FR-86**: A future authorized agent tool may invoke a controlled migration or synchronization service to import Google Sheets expenses and Google Calendar events into the internal expense and event systems.
 - **FR-87**: WhatsApp may be added as a later communication channel after the Telegram product and channel-independent runtime boundaries are stable.
-- **FR-88**: A recurring internal event shall remain one event record and shall create no stored occurrence rows. Its `recurrence_rule` shall be either a non-empty list of unique weekdays or a non-empty list of unique month days from 1 through 31. Weekdays imply weekly recurrence and month days imply monthly recurrence.
+- **FR-88**: A recurring internal event shall remain one event record and shall create no stored occurrence rows. Its `recurrence_rule` shall contain either a non-empty `week_days` list of unique weekdays or a non-empty `month_days` list of unique month days from 1 through 31. `week_days` implies weekly recurrence and `month_days` implies monthly recurrence.
 - **FR-89**: Recurrence shall be infinite. A month day that does not exist in a particular month shall produce no occurrence in that month.
-- **FR-90**: A recurring event shall preserve the ordinary timed, all-day, multi-day, timezone, type, title, description, and notification-lead behavior. Its stored start and end define the local schedule used for every matching recurrence.
+- **FR-90**: A recurring event shall preserve the ordinary timed, all-day, multi-day, timezone, type, title, description, and notification-lead behavior. Its stored start and end define the local schedule used for every matching recurrence. An omitted recurrence rule on update shall preserve it, while an explicit null rule shall convert the event to one-time.
 - **FR-91**: Event reads shall treat a recurring event as one owned event definition. A bounded date-range read shall include it when its recurrence rule produces at least one matching local occurrence in that range.
-- **FR-92**: The target event lifecycle shall use active and disabled event states plus permanent deletion. Disabling an event shall stop its occurrences and notifications until it is re-enabled. The target lifecycle shall not expose cancellation or notification-only enablement as separate states.
+- **FR-92**: The event lifecycle shall use active and disabled event states plus permanent deletion. Disabling an event shall stop its occurrences and notifications until it is re-enabled. The lifecycle shall not expose cancellation or notification-only enablement as separate states.
 - **FR-93**: A successful recurring notification shall update the event's `last_notified_at`. The scheduler shall send only when the current time is within a computed occurrence's notification window and `last_notified_at` precedes that window. Failed delivery shall not update the field, and an occurrence whose start has passed shall be skipped.
 - **FR-94**: The scheduler shall derive recurring occurrences from the recurrence rule in the event's configured local timezone on each bounded check. It shall maintain no next-occurrence cursor and no per-occurrence notification state.
 - **FR-95**: Media attached to the current Telegram message shall be downloaded and included automatically throughout its Gemini reason-and-act loop. A media attachment from an earlier message shall be loaded only when the agent calls an authorized read-only recent-media tool.
 - **FR-96**: The process-local recent-media store shall retain at most the ten newest Telegram media references per internal user for at least twelve hours on a best-effort basis. Process restart may discard these references, and raw media bytes shall not remain in the store.
 - **FR-97**: The system instruction may expose compact metadata and internal attachment identifiers for available recent media, but shall not expose Telegram file identifiers or raw media. A media tool result shall allow the next Gemini reasoning call to receive the selected media as a native content part.
-- **FR-98**: Unsupported media types, formats, or sizes shall receive a concise Telegram response without invoking the assistant engine or consuming conversation quota. The update shall still follow deduplication policy so a retry does not repeat the rejection response.
+- **FR-98**: Unsupported media types or formats shall receive a concise `Formato no soportado` Telegram response without invoking the assistant engine or consuming conversation quota. The update shall still follow deduplication policy so a retry does not repeat the rejection response.
 - **FR-99**: Telegram file identifiers shall be treated as sensitive references, excluded from logs and model context, and resolved through Telegram again when recent media is requested. Downloaded bytes shall be discarded after the active model call.
+- **FR-100**: The combined raw size of all media attached to one aggregated turn shall not exceed 12 MiB. A single attachment whose declared size exceeds that limit should be rejected before download.
 
 ### Companionship and Safety
 
@@ -213,18 +215,18 @@ Harle is conceptually divided into these program areas:
 - **Assistant engine**: Builds user-scoped context, calls the model, parses structured output, executes available tools, caps tool loops, and returns final text.
 - **Message coordinator**: Deduplicates Telegram updates, aggregates safe consecutive messages, and serializes conflicting work per identity.
 - **Memory and profile stores**: Persist conversations, retrieve bounded context, and store durable user and assistant profile data.
-- **Expense and event stores**: Persist user-owned internal expenses, typed events, notification windows, delivery state, and the approved target recurrence definitions and successful-notification timestamps.
+- **Expense and event stores**: Persist user-owned internal expenses, typed events, notification windows, recurrence definitions, and successful-notification timestamps.
 - **Context providers**: Provide current date, time, and weather from user-specific timezone and location inputs.
 - **Tool system**: Defines tool families, effects, argument contracts, authorization, prompt relevance, request-scoped handlers, and structured results.
 - **Preflight services**: Resolve identity and subscription, apply temporary bans, and reserve monthly quota before assistant execution.
 - **Event scheduler**: Selects eligible events every five minutes, wakes the owning active user's agent, sends Telegram notifications, and records successful delivery.
-- **Future runtime services**: Proposed-action, audit, durable delivery, privacy, subscription-synchronization, Google import, recurring-event, and recent-media services remain pending.
+- **Future runtime services**: Proposed-action, audit, durable delivery, privacy, subscription-synchronization, and Google import services remain pending.
 - **External integrations**: Connects to AI providers, Telegram, PostgreSQL, Google Sheets, future productivity services, weather data, and external account or subscription systems.
 
 The implemented controlled-beta message flow is:
 
 1. Telegram sends an update to the webhook.
-2. The API validates the webhook secret and parses a supported text message.
+2. The API validates the webhook secret and parses supported text, image, voice-note, or audio content.
 3. The message coordinator persists or deduplicates the update and applies the per-identity safety limit.
 4. Consecutive safe messages join the active turn; later conflicting work is queued.
 5. Preflight resolves the internal user, validates subscription and plan, and reserves quota.
@@ -237,14 +239,14 @@ The implemented controlled-beta message flow is:
 The implemented scheduled-event flow is:
 
 1. `AgentsScheduler` runs every five minutes.
-2. It selects scheduled, pending events whose notification window has started and whose event start remains in the future.
+2. It selects active one-time events with an open notification window and active recurring definitions that may produce a due occurrence.
 3. The runtime resolves the owning active user's Telegram identity and builds the user's request-scoped stores and context providers.
 4. Harle receives each event as agenda context for a user event or scheduled task context for a system event.
 5. Harle generates a concise notification without modifying tools or a monthly quota reservation.
 6. Harle sends the notification to the user's private Telegram chat.
-7. The notification becomes delivered after successful delivery. Failed delivery remains pending and eligible until the event starts.
+7. Successful delivery updates `last_notified_at`. Failed delivery remains eligible until the occurrence starts.
 
-The approved target recurring-event flow is:
+The implemented recurring-event flow is:
 
 1. One internal-event row stores an optional weekly or monthly recurrence rule.
 2. A bounded event read determines whether the rule matches its requested local date range and returns the event definition once.
@@ -253,7 +255,7 @@ The approved target recurring-event flow is:
 5. Successful delivery updates `last_notified_at`; failure leaves it unchanged for retry.
 6. Disabling the event suppresses recurrence and notification work, re-enabling resumes it, and deletion permanently removes the row.
 
-The approved target Telegram-media flow is:
+The implemented Telegram-media flow is:
 
 1. The webhook parses and claims a supported image or audio update before assistant work.
 2. Unsupported media receives one deduplicated Telegram rejection without invoking Gemini or consuming conversation quota.
@@ -297,7 +299,7 @@ Open requirements that need product discovery:
 - Subscription plan boundaries, usage limits, free trials, failed payments, and cancellation behavior.
 - Telegram authorization UX for approving, cancelling, and expiring proposed modifications.
 - Durable notification delivery, quiet periods, and external calendar integration beyond the process-local event capability.
-- The exact supported Telegram media MIME types, file-size limits, and user-facing rejection messages.
+- The exact long-term Telegram media MIME allowlist beyond the voice-note-first controlled beta.
 - Data retention, deletion, export, and backup policies.
 - Concrete latency, cost, and reliability targets for paid launch.
 - WhatsApp integration requirements for a later product phase.

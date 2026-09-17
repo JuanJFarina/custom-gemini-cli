@@ -20,7 +20,7 @@ class EventRepository(Protocol):
         *,
         user_id: UUID,
         event_id: UUID,
-        include_cancelled: bool = False,
+        include_disabled: bool = False,
     ) -> InternalEvent | None: ...
 
     async def list_for_range(
@@ -29,7 +29,7 @@ class EventRepository(Protocol):
         user_id: UUID,
         starts_at: datetime,
         ends_at: datetime,
-        include_cancelled: bool = False,
+        include_disabled: bool = False,
     ) -> Sequence[InternalEvent]: ...
 
     async def list_due_for_notification(
@@ -46,12 +46,20 @@ class EventRepository(Protocol):
         event: InternalEvent,
     ) -> InternalEvent | None: ...
 
-    async def cancel(
+    async def disable(
         self,
         *,
         user_id: UUID,
         event_id: UUID,
-        cancelled_at: datetime,
+        updated_at: datetime,
+    ) -> InternalEvent | None: ...
+
+    async def enable(
+        self,
+        *,
+        user_id: UUID,
+        event_id: UUID,
+        updated_at: datetime,
     ) -> InternalEvent | None: ...
 
     async def mark_notification_delivered(

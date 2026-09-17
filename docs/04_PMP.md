@@ -4,7 +4,7 @@
 
 This plan advances Harle from the implemented controlled beta described in [Features](02_FEATURES.md) and the [SRS](03_SRS.md) to a broad commercial release without expanding the first-product channel beyond Telegram.
 
-The current beta already includes multi-user identity, user-scoped profiles and conversations, internal expenses, typed events with process-local Telegram notifications, Juan-only Google Sheets expenses, Telegram deduplication and ordering, temporary bans, and plan quotas.
+The current beta already includes multi-user identity, user-scoped profiles and conversations, internal expenses, one-time and simple recurring events with process-local Telegram notifications, native Telegram image and audio input, a best-effort recent-media tool, Juan-only Google Sheets expenses, Telegram deduplication and ordering, temporary bans, and plan quotas.
 
 This plan covers:
 
@@ -93,17 +93,14 @@ Exit criteria:
 
 Implemented baseline:
 
-- Internal events have `user_event` and `system_event` types, `notification_window_start`, and `notification_status` with `disabled`, `pending`, and `delivered` states.
-- Both event types enable notifications by default with a 15-minute lead. Users can disable or re-enable notifications, set a positive custom lead, or use zero to restore the default.
-- A process-local `AgentsScheduler` runs every five minutes, wakes the owning active user's agent for pending events without modifying tools or consuming conversation quota, and marks notifications delivered after successful Telegram delivery.
+- Internal events have `user_event` and `system_event` types, active and disabled states, permanent deletion, a notification window, and `last_notified_at`.
+- Events may remain one-time or repeat forever through one `week_days` or `month_days` rule without materialized occurrence rows.
+- A process-local `AgentsScheduler` runs every five minutes, derives due local occurrences, wakes the owning active user's agent without modifying tools or consuming conversation quota, and records successful delivery.
+- Supported Telegram images, voice notes, and audio files reach Gemini as native content parts. Current media is attached automatically and the ten newest references remain available through a read-only tool for twelve hours on a best-effort basis.
 
 Remaining goals:
 
 - Add user-controlled memory and profile inspection, correction, refinement, and deletion.
-- Add infinite weekly and monthly recurrence to the existing internal-event record without materializing occurrences.
-- Replace the target event lifecycle with active or disabled events plus permanent deletion, and record successful notification time instead of per-occurrence notification state.
-- Add native image, voice-note, and audio input through Telegram, automatically attaching current-message media to the Gemini reasoning loop.
-- Add a read-only recent-media tool backed by a process-local, best-effort store of the ten newest Telegram media references per user for at least twelve hours.
 - Add quiet periods and bounded proactive check-ins only if later product policy requires them.
 - Add an authorized agent tool that invokes a controlled Google expense and calendar import or synchronization service.
 - Add multi-user Google Sheets and Google Calendar through least-privilege OAuth.
@@ -140,6 +137,14 @@ Exit criteria:
 - **Ephemeral media loss**: Treat the twelve-hour process-local media window as best-effort and allow restart to discard it.
 - **Unresolved policy implemented as code**: Block the affected phase until the product decision is recorded in Features or the SRS.
 
+## Accepted MVP Limitations
+
+- A successful Telegram event notification followed by failure to persist `last_notified_at` may be delivered again. Durable outbox delivery is deferred.
+- The single-process scheduler may scan every active recurring definition on each five-minute pass. Distributed or indexed recurrence scheduling is deferred until measured load requires it.
+- Voice notes are the primary audio target. Audio uploaded as a generic Telegram document is unsupported.
+- The Gemini inline request uses a conservative 12 MiB combined raw-media limit to remain below its total request limit after encoding and prompt overhead.
+- PostgreSQL integration tests may skip in local environments without `TEST_POSTGRES_DATABASE_URL`; the release environment must execute them against the deployed schema.
+
 ## Open Product Decisions
 
 - Final plan names, quotas, upgrades, downgrades, carry-over, and failed-payment grace behavior
@@ -151,6 +156,6 @@ Exit criteria:
 - Memory consent and automatic learning policy
 - Proactive check-in preferences and quiet periods
 - System-event creation permissions and supported task payloads
-- Supported Telegram image and audio MIME types, file-size limits, and rejection messages
+- The long-term Telegram image and audio MIME allowlist beyond the voice-note-first beta
 - Internal versus Google source-of-truth and synchronization rules
 - Exact service-level targets, metrics, and alert thresholds

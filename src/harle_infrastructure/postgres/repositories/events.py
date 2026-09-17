@@ -1,4 +1,5 @@
-from collections.abc import Sequence
+import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
@@ -13,7 +14,10 @@ from harle_domain.events import (
     EventTimestamps,
     EventType,
     InternalEvent,
-    NotificationStatus,
+    MonthlyRecurrence,
+    RecurrenceRule,
+    WeekDay,
+    WeeklyRecurrence,
 )
 
 EVENT_COLUMNS = """
@@ -28,10 +32,10 @@ EVENT_COLUMNS = """
     event_type,
     status,
     notification_window_start,
-    notification_status,
+    last_notified_at,
+    recurrence_rule,
     created_at,
-    updated_at,
-    cancelled_at
+    updated_at
 """
 
 
@@ -46,8 +50,8 @@ class PostgresEventRepository:
         event: InternalEvent,
     ) -> InternalEvent:
         _require_event_owner(user_id, event)
-        if event.status is not EventStatus.SCHEDULED:
-            raise ValueError("A new event must be scheduled.")
+        if event.status is not EventStatus.ACTIVE:
+            raise ValueError("A new event must be active.")
         async with self.pool.acquire() as connection:
             row = await connection.fetchrow(
                 f"""
@@ -63,14 +67,14 @@ class PostgresEventRepository:
                     event_type,
                     status,
                     notification_window_start,
-                    notification_status,
+                    last_notified_at,
+                    recurrence_rule,
                     created_at,
-                    updated_at,
-                    cancelled_at
+                    updated_at
                 )
                 VALUES (
                     $1, $2, $3, $4, $5, $6, $7,
-                    $8, $9, $10, $11, $12, $13, $14, $15
+                    $8, $9, $10, $11, $12, $13::jsonb, $14, $15
                 )
                 RETURNING {EVENT_COLUMNS}
                 """,
@@ -85,10 +89,10 @@ class PostgresEventRepository:
                 event.event_type.value,
                 event.status.value,
                 event.notification_window_start,
-                event.notification_status.value,
+                event.last_notified_at,
+                _recurrence_json(event.recurrence_rule),
                 event.created_at,
                 event.updated_at,
-                event.cancelled_at,
             )
         if row is None:
             raise RuntimeError("Could not create internal event.")
@@ -99,7 +103,7 @@ class PostgresEventRepository:
         *,
         user_id: UUID,
         event_id: UUID,
-        include_cancelled: bool = False,
+        include_disabled: bool = False,
     ) -> InternalEvent | None:
         async with self.pool.acquire() as connection:
             row = await connection.fetchrow(
@@ -109,13 +113,13 @@ class PostgresEventRepository:
                 WHERE id = $1
                     AND user_id = $2
                     AND (
-                        status = 'scheduled'
-                        OR ($3 AND status = 'cancelled')
+                        status = 'active'
+                        OR ($3 AND status = 'disabled')
                     )
                 """,
                 event_id,
                 user_id,
-                include_cancelled,
+                include_disabled,
             )
         return _event_from_row(row) if row is not None else None
 
@@ -125,7 +129,7 @@ class PostgresEventRepository:
         user_id: UUID,
         starts_at: datetime,
         ends_at: datetime,
-        include_cancelled: bool = False,
+        include_disabled: bool = False,
     ) -> Sequence[InternalEvent]:
         if ends_at <= starts_at:
             raise ValueError("Event range end must be after its start.")
@@ -136,17 +140,20 @@ class PostgresEventRepository:
                 FROM internal_events
                 WHERE user_id = $1
                     AND starts_at < $3
-                    AND ends_at > $2
                     AND (
-                        status = 'scheduled'
-                        OR ($4 AND status = 'cancelled')
+                        recurrence_rule IS NOT NULL
+                        OR ends_at > $2
+                    )
+                    AND (
+                        status = 'active'
+                        OR ($4 AND status = 'disabled')
                     )
                 ORDER BY starts_at, ends_at, id
                 """,
                 user_id,
                 starts_at,
                 ends_at,
-                include_cancelled,
+                include_disabled,
             )
         return [_event_from_row(row) for row in rows]
 
@@ -163,14 +170,25 @@ class PostgresEventRepository:
         async with self.pool.acquire() as connection:
             rows = await connection.fetch(
                 f"""
+                WITH one_time_due AS (
+                    SELECT {EVENT_COLUMNS}
+                    FROM internal_events
+                    WHERE status = 'active'
+                        AND recurrence_rule IS NULL
+                        AND last_notified_at IS NULL
+                        AND notification_window_start <= $1
+                        AND starts_at > $1
+                    ORDER BY notification_window_start, starts_at, id
+                    LIMIT $2
+                )
                 SELECT {EVENT_COLUMNS}
                 FROM internal_events
-                WHERE status = 'scheduled'
-                    AND notification_status = 'pending'
-                    AND notification_window_start <= $1
-                    AND starts_at > $1
+                WHERE status = 'active'
+                    AND recurrence_rule IS NOT NULL
+                UNION ALL
+                SELECT {EVENT_COLUMNS}
+                FROM one_time_due
                 ORDER BY notification_window_start, starts_at, id
-                LIMIT $2
                 """,
                 current_time,
                 limit,
@@ -184,8 +202,6 @@ class PostgresEventRepository:
         event: InternalEvent,
     ) -> InternalEvent | None:
         _require_event_owner(user_id, event)
-        if event.status is not EventStatus.SCHEDULED:
-            raise ValueError("Only scheduled events can be updated.")
         async with self.pool.acquire() as connection:
             row = await connection.fetchrow(
                 f"""
@@ -198,11 +214,12 @@ class PostgresEventRepository:
                     all_day = $8,
                     event_type = $9,
                     notification_window_start = $10,
-                    notification_status = $11,
-                    updated_at = $12
+                    last_notified_at = $11,
+                    recurrence_rule = $12::jsonb,
+                    updated_at = $13
                 WHERE id = $1
                     AND user_id = $2
-                    AND status = 'scheduled'
+                    AND status IN ('active', 'disabled')
                 RETURNING {EVENT_COLUMNS}
                 """,
                 event.id,
@@ -215,7 +232,8 @@ class PostgresEventRepository:
                 event.all_day,
                 event.event_type.value,
                 event.notification_window_start,
-                event.notification_status.value,
+                event.last_notified_at,
+                _recurrence_json(event.recurrence_rule),
                 event.updated_at,
             )
         return _event_from_row(row) if row is not None else None
@@ -232,12 +250,11 @@ class PostgresEventRepository:
             row = await connection.fetchrow(
                 f"""
                 UPDATE internal_events
-                SET notification_status = 'delivered',
+                SET last_notified_at = $4,
                     updated_at = $4
                 WHERE id = $1
                     AND user_id = $2
-                    AND status = 'scheduled'
-                    AND notification_status = 'pending'
+                    AND status = 'active'
                     AND updated_at = $3
                 RETURNING {EVENT_COLUMNS}
                 """,
@@ -248,28 +265,51 @@ class PostgresEventRepository:
             )
         return _event_from_row(row) if row is not None else None
 
-    async def cancel(
+    async def disable(
         self,
         *,
         user_id: UUID,
         event_id: UUID,
-        cancelled_at: datetime,
+        updated_at: datetime,
     ) -> InternalEvent | None:
         async with self.pool.acquire() as connection:
             row = await connection.fetchrow(
                 f"""
                 UPDATE internal_events
-                SET status = 'cancelled',
-                    updated_at = $3,
-                    cancelled_at = $3
+                SET status = 'disabled',
+                    updated_at = $3
                 WHERE id = $1
                     AND user_id = $2
-                    AND status = 'scheduled'
+                    AND status = 'active'
                 RETURNING {EVENT_COLUMNS}
                 """,
                 event_id,
                 user_id,
-                cancelled_at,
+                updated_at,
+            )
+        return _event_from_row(row) if row is not None else None
+
+    async def enable(
+        self,
+        *,
+        user_id: UUID,
+        event_id: UUID,
+        updated_at: datetime,
+    ) -> InternalEvent | None:
+        async with self.pool.acquire() as connection:
+            row = await connection.fetchrow(
+                f"""
+                UPDATE internal_events
+                SET status = 'active',
+                    updated_at = $3
+                WHERE id = $1
+                    AND user_id = $2
+                    AND status = 'disabled'
+                RETURNING {EVENT_COLUMNS}
+                """,
+                event_id,
+                user_id,
+                updated_at,
             )
         return _event_from_row(row) if row is not None else None
 
@@ -285,7 +325,7 @@ class PostgresEventRepository:
                 DELETE FROM internal_events
                 WHERE id = $1
                     AND user_id = $2
-                    AND status IN ('scheduled', 'cancelled')
+                    AND status IN ('active', 'disabled')
                 RETURNING {EVENT_COLUMNS}
                 """,
                 event_id,
@@ -312,13 +352,13 @@ def _event_from_row(row: asyncpg.Record) -> InternalEvent:
         ),
         notification=EventNotification(
             window_start=_datetime(row, "notification_window_start"),
-            status=NotificationStatus(_text(row, "notification_status")),
+            last_notified_at=_optional_datetime(row, "last_notified_at"),
         ),
         timestamps=EventTimestamps(
             created_at=_datetime(row, "created_at"),
             updated_at=_datetime(row, "updated_at"),
-            cancelled_at=_optional_datetime(row, "cancelled_at"),
         ),
+        recurrence_rule=_recurrence_rule(row["recurrence_rule"]),
     )
 
 
@@ -355,6 +395,37 @@ def _optional_datetime(row: asyncpg.Record, key: str) -> datetime | None:
     if not isinstance(value, datetime):
         raise TypeError(f"Expected {key} to be a datetime or null.")
     return value
+
+
+def _recurrence_json(rule: RecurrenceRule | None) -> str | None:
+    if isinstance(rule, WeeklyRecurrence):
+        return json.dumps(
+            {"week_days": sorted(day.value for day in rule.days)},
+        )
+    if isinstance(rule, MonthlyRecurrence):
+        return json.dumps({"month_days": sorted(rule.days)})
+    if rule is None:
+        return None
+    raise TypeError("Unknown recurrence rule.")
+
+
+def _recurrence_rule(value: object) -> RecurrenceRule | None:
+    if value is None:
+        return None
+    decoded: object = json.loads(value) if isinstance(value, str) else value
+    if not isinstance(decoded, Mapping):
+        raise TypeError("Expected recurrence_rule to be a JSON object.")
+    week_days = decoded.get("week_days")
+    month_days = decoded.get("month_days")
+    if isinstance(week_days, list) and month_days is None:
+        if not all(isinstance(day, str) for day in week_days):
+            raise TypeError("Expected recurrence weekdays to be text.")
+        return WeeklyRecurrence(frozenset(WeekDay(day) for day in week_days))
+    if isinstance(month_days, list) and week_days is None:
+        if not all(isinstance(day, int) for day in month_days):
+            raise TypeError("Expected recurrence month days to be integers.")
+        return MonthlyRecurrence(frozenset(month_days))
+    raise ValueError("Recurrence rule must contain week_days or month_days.")
 
 
 def _boolean(row: asyncpg.Record, key: str) -> bool:

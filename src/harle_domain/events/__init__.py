@@ -6,13 +6,20 @@ from .models import (
     EventTimestamps,
     EventType,
     InternalEvent,
-    NotificationStatus,
+    MonthlyRecurrence,
+    RecurrenceRule,
+    WeekDay,
+    WeeklyRecurrence,
 )
 from .ports import EventRepository
 from .rules import (
     EventRange,
     all_day_event_interval,
+    due_recurrence_interval,
     event_range,
+    recurrence_interval,
+    recurrence_overlaps_range,
+    recurs_on,
     timed_event_interval,
 )
 
@@ -26,8 +33,15 @@ __all__ = [
     "EventTimestamps",
     "EventType",
     "InternalEvent",
-    "NotificationStatus",
+    "MonthlyRecurrence",
+    "RecurrenceRule",
+    "WeekDay",
+    "WeeklyRecurrence",
     "all_day_event_interval",
+    "due_recurrence_interval",
     "event_range",
+    "recurs_on",
+    "recurrence_interval",
+    "recurrence_overlaps_range",
     "timed_event_interval",
 ]

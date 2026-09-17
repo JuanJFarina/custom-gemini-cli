@@ -10,6 +10,7 @@ class ApiSettings(Settings):
     POSTGRES_POOL_MIN_SIZE: int = 1
     POSTGRES_POOL_MAX_SIZE: int = 5
     EVENT_SCHEDULER_INTERVAL_SECONDS: float = 300
+    MAX_MEDIA_REQUEST_SIZE: int = 12 * 1024 * 1024
 
 
 @cache

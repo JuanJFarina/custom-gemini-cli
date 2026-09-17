@@ -1,72 +1,28 @@
 from asyncio import CancelledError, Lock, Task
-from collections.abc import Callable, MutableMapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
-from enum import Enum
 
-from harle_domain.messaging import TelegramUpdateRepository, TelegramUpdateState
+from harle_domain.messaging import (
+    TelegramUpdateRepository,
+    TelegramUpdateState,
+)
 from harle_services.access import TemporaryBan
 
+from .models import (
+    MessageFragment,
+    MessageSubmission,
+    MessageSubmissionStatus,
+    MessageTurn,
+)
 
-class MessageSubmissionStatus(str, Enum):
-    STARTED = "started"
-    JOINED = "joined"
-    QUEUED = "queued"
-    DUPLICATE = "duplicate"
-    DELIVERED = "delivered"
-    RATE_LIMITED = "rate_limited"
-    INTERRUPTED = "interrupted"
-
-
-@dataclass(frozen=True, slots=True)
-class MessageSubmission:
-    status: MessageSubmissionStatus
-    temporary_ban: TemporaryBan | None = None
-
-    def __post_init__(self) -> None:
-        is_rate_limited = self.status is MessageSubmissionStatus.RATE_LIMITED
-        if is_rate_limited != (self.temporary_ban is not None):
-            raise ValueError("Rate-limited submissions require temporary ban details.")
-
-    @property
-    def accepted(self) -> bool:
-        return self.status in {
-            MessageSubmissionStatus.STARTED,
-            MessageSubmissionStatus.JOINED,
-            MessageSubmissionStatus.QUEUED,
-        }
-
-    @property
-    def starts_processing(self) -> bool:
-        return self.status is MessageSubmissionStatus.STARTED
-
-
-@dataclass(frozen=True, slots=True)
-class MessageFragment:
-    update_id: int
-    telegram_user_id: int
-    telegram_chat_id: int
-    text: str
-
-
-@dataclass(frozen=True, slots=True)
-class MessageTurn:
-    telegram_user_id: int
-    telegram_chat_id: int
-    messages: Sequence[MessageFragment]
-    generation: int
-
-    @property
-    def update_ids(self) -> tuple[int, ...]:
-        return tuple(message.update_id for message in self.messages)
-
-    @property
-    def prompt(self) -> str:
-        if len(self.messages) == 1:
-            return self.messages[0].text
-        return "\n\n".join(
-            f"[Message {index}]\n{message.text}"
-            for index, message in enumerate(self.messages, start=1)
-        )
+TERMINAL_SUBMISSIONS: Mapping[TelegramUpdateState, MessageSubmissionStatus] = {
+    TelegramUpdateState.DELIVERED: MessageSubmissionStatus.DELIVERED,
+    TelegramUpdateState.RATE_LIMITED: MessageSubmissionStatus.DUPLICATE,
+    TelegramUpdateState.REJECTED: MessageSubmissionStatus.DUPLICATE,
+    TelegramUpdateState.TOOL_STARTED: MessageSubmissionStatus.INTERRUPTED,
+    TelegramUpdateState.DELIVERING: MessageSubmissionStatus.INTERRUPTED,
+    TelegramUpdateState.INTERRUPTED: MessageSubmissionStatus.INTERRUPTED,
+}
 
 
 @dataclass(slots=True)
@@ -98,37 +54,22 @@ class MessageCoordinator:
 
     async def receive(
         self,
-        *,
-        update_id: int,
-        telegram_user_id: int,
-        telegram_chat_id: int,
-        text: str,
+        message: MessageFragment,
     ) -> MessageSubmission:
-        message = MessageFragment(
-            update_id=update_id,
-            telegram_user_id=telegram_user_id,
-            telegram_chat_id=telegram_chat_id,
-            text=text,
-        )
+        update_id = message.update_id
+        telegram_user_id = message.telegram_user_id
         entry = await self._entry(telegram_user_id)
         task_to_cancel: Task[object] | None = None
         async with entry.lock:
             receipt = await self._repository.receive(
                 update_id=update_id,
                 telegram_user_id=telegram_user_id,
-                telegram_chat_id=telegram_chat_id,
-                message_text=text,
+                telegram_chat_id=message.telegram_chat_id,
+                message_text=message.text,
             )
-            if receipt.state is TelegramUpdateState.DELIVERED:
-                return MessageSubmission(MessageSubmissionStatus.DELIVERED)
-            if receipt.state is TelegramUpdateState.RATE_LIMITED:
-                return MessageSubmission(MessageSubmissionStatus.DUPLICATE)
-            if receipt.state in {
-                TelegramUpdateState.TOOL_STARTED,
-                TelegramUpdateState.DELIVERING,
-                TelegramUpdateState.INTERRUPTED,
-            }:
-                return MessageSubmission(MessageSubmissionStatus.INTERRUPTED)
+            terminal_submission = _terminal_submission(receipt.state)
+            if terminal_submission is not None:
+                return terminal_submission
             if _contains_update(entry, update_id):
                 return MessageSubmission(MessageSubmissionStatus.DUPLICATE)
             if receipt.newly_persisted:
@@ -154,6 +95,40 @@ class MessageCoordinator:
         if task_to_cancel is not None:
             task_to_cancel.cancel()
         return MessageSubmission(status)
+
+    async def reject(
+        self,
+        *,
+        update_id: int,
+        telegram_user_id: int,
+        telegram_chat_id: int,
+        text: str,
+    ) -> MessageSubmission:
+        entry = await self._entry(telegram_user_id)
+        async with entry.lock:
+            receipt = await self._repository.receive(
+                update_id=update_id,
+                telegram_user_id=telegram_user_id,
+                telegram_chat_id=telegram_chat_id,
+                message_text=text,
+            )
+            if receipt.state in {
+                TelegramUpdateState.REJECTED,
+                TelegramUpdateState.DELIVERED,
+                TelegramUpdateState.RATE_LIMITED,
+                TelegramUpdateState.INTERRUPTED,
+            }:
+                return MessageSubmission(MessageSubmissionStatus.DUPLICATE)
+            if receipt.newly_persisted:
+                temporary_ban = self._rate_limiter(telegram_user_id)
+                if temporary_ban is not None:
+                    await self._repository.mark_rate_limited([update_id])
+                    return MessageSubmission(
+                        MessageSubmissionStatus.RATE_LIMITED,
+                        temporary_ban,
+                    )
+            await self._repository.mark_rejected([update_id])
+            return MessageSubmission(MessageSubmissionStatus.REJECTED)
 
     async def current_turn(self, telegram_user_id: int) -> MessageTurn | None:
         entry = await self._entry(telegram_user_id)
@@ -304,6 +279,13 @@ def _contains_update(entry: _UserMessages, update_id: int) -> bool:
         *entry.queued,
     ]
     return any(message.update_id == update_id for message in messages)
+
+
+def _terminal_submission(
+    state: TelegramUpdateState,
+) -> MessageSubmission | None:
+    status = TERMINAL_SUBMISSIONS.get(state)
+    return MessageSubmission(status) if status is not None else None
 
 
 def _snapshot(telegram_user_id: int, active: _ActiveTurn) -> MessageTurn:

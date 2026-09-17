@@ -19,12 +19,14 @@ class ToolAccessPolicy:
                 {
                     ToolFamily.INTERNAL_EVENTS,
                     ToolFamily.LEGACY_GOOGLE_SHEETS_EXPENSES,
+                    ToolFamily.RECENT_MEDIA,
                 },
             )
         return frozenset(
             {
                 ToolFamily.INTERNAL_EVENTS,
                 ToolFamily.INTERNAL_EXPENSES,
+                ToolFamily.RECENT_MEDIA,
             },
         )
 

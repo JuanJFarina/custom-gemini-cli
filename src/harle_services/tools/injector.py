@@ -1,8 +1,10 @@
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
 from harle_domain.accounts import ResolvedUser
+from harle_domain.messaging import RecentMedia
 from harle_domain.tools import HarleToolStore, ToolFamily
 from harle_utils import log
 
@@ -56,6 +58,7 @@ class ToolInjectionContext:
     resolved_user: ResolvedUser
     timezone: str
     prompt: str
+    recent_media: Sequence[RecentMedia] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,17 +71,30 @@ class ToolsInjector:
         context: ToolInjectionContext,
     ) -> HarleToolStore:
         authorized = self.access_policy.authorized_families(context.resolved_user)
+        if not context.recent_media:
+            authorized = authorized - {ToolFamily.RECENT_MEDIA}
         families = _relevant_families(context.prompt, authorized)
+        if ToolFamily.RECENT_MEDIA in authorized:
+            families = families | {ToolFamily.RECENT_MEDIA}
         log.info(
             "Injecting tool families %s from authorized %s and registered %s",
             families,
             authorized,
             self.registry.families,
         )
-        return self.registry.build_store(
+        store = self.registry.build_store(
             user_id=context.resolved_user.user.id,
             timezone=context.timezone,
             authorized_families=families,
+        )
+        if not context.recent_media:
+            return store
+        return HarleToolStore(
+            tools=store.tools,
+            family_instructions=(
+                *store.family_instructions,
+                _recent_media_prompt(context.recent_media),
+            ),
         )
 
     def inject_for_explicit_user_id(self, user_id: UUID) -> HarleToolStore:
@@ -113,3 +129,16 @@ def _contains_any_term(prompt: str, terms: tuple[str, ...]) -> bool:
         re.search(rf"(?<!\w){re.escape(term)}(?!\w)", prompt) is not None
         for term in terms
     )
+
+
+def _recent_media_prompt(media: Sequence[RecentMedia]) -> str:
+    entries = [
+        (
+            f"- attachment_id={item.attachment_id}, "
+            f"kind={item.reference.kind.value}, "
+            f"received_at={item.stored_at.isoformat()}, "
+            f"file_name={item.reference.file_name or 'not supplied'}"
+        )
+        for item in media
+    ]
+    return "Recent Telegram attachments:\n" + "\n".join(entries)
