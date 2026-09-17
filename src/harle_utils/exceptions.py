@@ -28,3 +28,7 @@ class InvalidDatabaseSchemaError(RuntimeError):
 
 class MessageDeliveryError(RuntimeError):
     pass
+
+
+class MediaDownloadError(RuntimeError):
+    pass

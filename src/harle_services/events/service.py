@@ -12,9 +12,11 @@ from harle_domain.events import (
     EventTimestamps,
     EventType,
     InternalEvent,
-    NotificationStatus,
+    RecurrenceRule,
     all_day_event_interval,
+    due_recurrence_interval,
     event_range,
+    recurrence_overlaps_range,
     timed_event_interval,
 )
 
@@ -64,7 +66,7 @@ class CreateEvent:
     schedule: EventSchedule
     event_type: EventType = EventType.USER_EVENT
     notify_before: timedelta = DEFAULT_NOTIFICATION_LEAD
-    notifications_enabled: bool = True
+    recurrence_rule: RecurrenceRule | None = None
 
     def __post_init__(self) -> None:
         if not self.title.strip():
@@ -79,7 +81,8 @@ class UpdateEvent:
     schedule: EventSchedule | None = None
     event_type: EventType | None = None
     notify_before: timedelta | None = None
-    notifications_enabled: bool | None = None
+    recurrence_rule: RecurrenceRule | None = None
+    replace_recurrence: bool = False
 
     def __post_init__(self) -> None:
         changes = (
@@ -88,9 +91,9 @@ class UpdateEvent:
             self.schedule,
             self.event_type,
             self.notify_before,
-            self.notifications_enabled,
+            self.replace_recurrence,
         )
-        if all(change is None for change in changes):
+        if changes == (None, None, None, None, None, False):
             raise ValueError("At least one event change is required.")
         if self.title is not None and not self.title.strip():
             raise ValueError("Event title cannot be empty.")
@@ -103,7 +106,7 @@ class EventQuery:
     start_date: date
     end_date: date
     timezone_name: str
-    include_cancelled: bool = False
+    include_disabled: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,12 +125,23 @@ class EventService:
             end_date=query.end_date,
             timezone_name=query.timezone_name,
         )
-        return await self.repository.list_for_range(
+        events = await self.repository.list_for_range(
             user_id=user_id,
             starts_at=bounded_range.starts_at,
             ends_at=bounded_range.ends_at,
-            include_cancelled=query.include_cancelled,
+            include_disabled=query.include_disabled,
         )
+        return [
+            event
+            for event in events
+            if event.recurrence_rule is None
+            or recurrence_overlaps_range(
+                interval=event.details.interval,
+                rule=event.recurrence_rule,
+                starts_at=bounded_range.starts_at,
+                ends_at=bounded_range.ends_at,
+            )
+        ]
 
     async def create(
         self,
@@ -146,20 +160,16 @@ class EventService:
                 description=event.description.strip(),
                 interval=interval,
                 event_type=event.event_type,
-                status=EventStatus.SCHEDULED,
+                status=EventStatus.ACTIVE,
             ),
             notification=EventNotification(
                 window_start=interval.starts_at - notification_lead,
-                status=(
-                    NotificationStatus.PENDING
-                    if event.notifications_enabled
-                    else NotificationStatus.DISABLED
-                ),
             ),
             timestamps=EventTimestamps(
                 created_at=now,
                 updated_at=now,
             ),
+            recurrence_rule=event.recurrence_rule,
         )
         return await self.repository.create(user_id=user_id, event=created)
 
@@ -187,9 +197,15 @@ class EventService:
             else current.starts_at - current.notification_window_start
         )
         notification_window_start = interval.starts_at - notification_lead
+        recurrence_rule = (
+            changes.recurrence_rule
+            if changes.replace_recurrence
+            else current.recurrence_rule
+        )
         notification_changed = (
             interval.starts_at != current.starts_at
             or notification_window_start != current.notification_window_start
+            or recurrence_rule != current.recurrence_rule
         )
         updated = replace(
             current,
@@ -211,13 +227,14 @@ class EventService:
             notification=replace(
                 current.notification,
                 window_start=notification_window_start,
-                status=_updated_notification_status(
-                    current.notification_status,
-                    notifications_enabled=changes.notifications_enabled,
-                    notification_changed=notification_changed,
+                last_notified_at=(
+                    None
+                    if notification_changed
+                    else current.notification.last_notified_at
                 ),
             ),
             timestamps=replace(current.timestamps, updated_at=self._now()),
+            recurrence_rule=recurrence_rule,
         )
         return await self.repository.update(user_id=user_id, event=updated)
 
@@ -228,10 +245,27 @@ class EventService:
     ) -> Sequence[InternalEvent]:
         if limit <= 0:
             raise ValueError("Due event limit must be positive.")
-        return await self.repository.list_due_for_notification(
-            current_time=self._now(),
+        current_time = self._now()
+        candidates = await self.repository.list_due_for_notification(
+            current_time=current_time,
             limit=limit,
         )
+        due_events: list[InternalEvent] = []
+        for event in candidates:
+            if event.recurrence_rule is None:
+                due_events.append(event)
+                continue
+            due_event = self._due_recurring_event(event, current_time)
+            if due_event is not None:
+                due_events.append(due_event)
+        return sorted(
+            due_events,
+            key=lambda event: (
+                event.notification_window_start,
+                event.starts_at,
+                event.id,
+            ),
+        )[:limit]
 
     async def mark_notification_delivered(
         self,
@@ -245,16 +279,28 @@ class EventService:
             updated_at=self._now(),
         )
 
-    async def cancel(
+    async def disable(
         self,
         *,
         user_id: UUID,
         event_id: UUID,
     ) -> InternalEvent | None:
-        return await self.repository.cancel(
+        return await self.repository.disable(
             user_id=user_id,
             event_id=event_id,
-            cancelled_at=self._now(),
+            updated_at=self._now(),
+        )
+
+    async def enable(
+        self,
+        *,
+        user_id: UUID,
+        event_id: UUID,
+    ) -> InternalEvent | None:
+        return await self.repository.enable(
+            user_id=user_id,
+            event_id=event_id,
+            updated_at=self._now(),
         )
 
     async def delete(
@@ -274,6 +320,33 @@ class EventService:
             raise ValueError("Event service clock must return a timezone-aware time.")
         return now.astimezone(timezone.utc)
 
+    def _due_recurring_event(
+        self,
+        event: InternalEvent,
+        current_time: datetime,
+    ) -> InternalEvent | None:
+        recurrence_rule = event.recurrence_rule
+        if recurrence_rule is None:
+            return None
+        notification_lead = event.starts_at - event.notification_window_start
+        occurrence = due_recurrence_interval(
+            interval=event.details.interval,
+            rule=recurrence_rule,
+            notify_before=notification_lead,
+            last_notified_at=event.last_notified_at,
+            current_time=current_time,
+        )
+        if occurrence is None:
+            return None
+        return replace(
+            event,
+            details=replace(event.details, interval=occurrence),
+            notification=replace(
+                event.notification,
+                window_start=occurrence.starts_at - notification_lead,
+            ),
+        )
+
 
 def _require_notification_lead(value: timedelta) -> None:
     if value < timedelta(0):
@@ -283,22 +356,3 @@ def _require_notification_lead(value: timedelta) -> None:
 def _normalize_notification_lead(value: timedelta) -> timedelta:
     _require_notification_lead(value)
     return DEFAULT_NOTIFICATION_LEAD if value == timedelta(0) else value
-
-
-def _updated_notification_status(
-    current: NotificationStatus,
-    *,
-    notifications_enabled: bool | None,
-    notification_changed: bool,
-) -> NotificationStatus:
-    if notifications_enabled is False:
-        return NotificationStatus.DISABLED
-    if current is NotificationStatus.DISABLED:
-        return (
-            NotificationStatus.PENDING
-            if notifications_enabled
-            else NotificationStatus.DISABLED
-        )
-    if notification_changed:
-        return NotificationStatus.PENDING
-    return current

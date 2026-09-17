@@ -1,5 +1,5 @@
-from .coordinator import (
-    MessageCoordinator,
+from .coordinator import MessageCoordinator
+from .models import (
     MessageFragment,
     MessageSubmission,
     MessageSubmissionStatus,

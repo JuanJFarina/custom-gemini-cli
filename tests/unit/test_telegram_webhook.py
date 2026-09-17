@@ -8,12 +8,17 @@ from fastapi import BackgroundTasks, FastAPI, Request
 from pytest import MonkeyPatch
 
 import harle_api.app as app_module
-from harle_domain.messaging import OutboundMessenger
+from harle_domain.messaging import (
+    OutboundMessenger,
+    RecentMediaStore,
+    TelegramMediaDownloader,
+)
 from harle_services.access import PreflightService, TemporaryBan
-from harle_services.bootstrap import ProcessRuntime
+from harle_services.bootstrap import ProcessRuntime, TelegramRuntime
 from harle_services.events import AgentsScheduler
 from harle_services.messaging import (
     MessageCoordinator,
+    MessageFragment,
     MessageSubmission,
     MessageSubmissionStatus,
 )
@@ -25,6 +30,7 @@ from harle_services.tools import ToolsInjector
 class FakeSettings:
     TELEGRAM_WEBHOOK_SECRET: str = "secret"
     TELEGRAM_BOT_TOKEN: str = "token"
+    MAX_MEDIA_REQUEST_SIZE: int = 12 * 1024 * 1024
 
 
 class FakeMessages:
@@ -34,14 +40,12 @@ class FakeMessages:
 
     async def receive(
         self,
-        *,
-        update_id: int,
-        telegram_user_id: int,
-        telegram_chat_id: int,
-        text: str,
+        message: MessageFragment,
     ) -> MessageSubmission:
-        del telegram_user_id, telegram_chat_id, text
-        self.received.append(update_id)
+        self.received.append(message.update_id)
+        return self._submission()
+
+    def _submission(self) -> MessageSubmission:
         status = self.statuses.pop(0)
         temporary_ban = (
             TemporaryBan(
@@ -52,6 +56,18 @@ class FakeMessages:
             else None
         )
         return MessageSubmission(status, temporary_ban)
+
+    async def reject(
+        self,
+        *,
+        update_id: int,
+        telegram_user_id: int,
+        telegram_chat_id: int,
+        text: str,
+    ) -> MessageSubmission:
+        del telegram_user_id, telegram_chat_id, text
+        self.received.append(update_id)
+        return self._submission()
 
 
 class FakeMessenger:
@@ -76,18 +92,25 @@ def fake_runtime(
         users=cast(UserRuntimeFactory, object()),
         tools=cast(ToolsInjector, object()),
         messages=cast(MessageCoordinator, messages),
-        messenger=cast(OutboundMessenger, messenger or FakeMessenger()),
+        telegram=TelegramRuntime(
+            messenger=cast(OutboundMessenger, messenger or FakeMessenger()),
+            media_downloader=cast(TelegramMediaDownloader, object()),
+            recent_media=cast(RecentMediaStore, object()),
+            maximum_media_request_size=12 * 1024 * 1024,
+        ),
         scheduler=cast(AgentsScheduler, object()),
     )
 
 
-def test_webhook_persists_before_starting_one_process_and_ignores_duplicate(
+def test_webhook_deduplicates_accepted_and_rejected_updates(
     monkeypatch: MonkeyPatch,
 ) -> None:
     async def verify() -> None:
         messages = FakeMessages(
             [
                 MessageSubmissionStatus.STARTED,
+                MessageSubmissionStatus.DUPLICATE,
+                MessageSubmissionStatus.REJECTED,
                 MessageSubmissionStatus.DUPLICATE,
             ],
         )
@@ -131,9 +154,41 @@ def test_webhook_persists_before_starting_one_process_and_ignores_duplicate(
         )
         await duplicate_tasks()
 
+        rejected_update = {
+            "update_id": 101,
+            "message": {
+                "video": {
+                    "file_id": "video",
+                    "file_unique_id": "video-unique",
+                    "mime_type": "video/mp4",
+                },
+                "chat": {"id": 200},
+                "from": {"id": 300},
+            },
+        }
+        rejected_tasks = BackgroundTasks()
+        rejected = await app_module.post_telegram_webhook(
+            update=rejected_update,
+            background_tasks=rejected_tasks,
+            request=request,
+            x_telegram_bot_api_secret_token="secret",
+        )
+        await rejected_tasks()
+        rejected_duplicate_tasks = BackgroundTasks()
+        rejected_duplicate = await app_module.post_telegram_webhook(
+            update=rejected_update,
+            background_tasks=rejected_duplicate_tasks,
+            request=request,
+            x_telegram_bot_api_secret_token="secret",
+        )
+        await rejected_duplicate_tasks()
+
         assert first.body == b'{"ok":true,"accepted":true,"disposition":"started"}'
         assert duplicate.body == b'{"ok":true,"accepted":false,"duplicate":true}'
-        assert messages.received == [100, 100]
+        assert b'"reason":"unsupported_media_type"' in rejected.body
+        assert b'"duplicate":true' in rejected_duplicate.body
+        assert messages.received == [100, 100, 101, 101]
+        assert messenger.messages == ["Formato no soportado."]
         assert process_calls == 1
 
     asyncio.run(verify())

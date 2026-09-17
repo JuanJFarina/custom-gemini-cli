@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
 from harle_agent.agent import Harle
@@ -10,6 +10,7 @@ from harle_agent.models import (
     HarleStores,
     default_harle_config,
 )
+from harle_domain.messaging import MediaContent
 from harle_domain.tools import HarleToolStore
 from harle_services.runtime import UserRuntime
 
@@ -26,6 +27,7 @@ async def generate_response(
     user_runtime: UserRuntime,
     tool_store: HarleToolStore,
     on_tool_started: Callable[[], Awaitable[None]] | None = None,
+    media: Sequence[MediaContent] = (),
 ) -> GeneratedResponse:
     user_profile = user_runtime.user_profile
     assistant_profile = user_runtime.assistant_profile
@@ -60,4 +62,7 @@ async def generate_response(
         ),
         on_tool_started=on_tool_started,
     )
-    return GeneratedResponse(harle=harle, result=await harle.call(prompt))
+    return GeneratedResponse(
+        harle=harle,
+        result=await harle.call(prompt, media=media),
+    )

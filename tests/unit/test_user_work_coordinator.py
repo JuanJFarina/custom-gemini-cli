@@ -3,10 +3,16 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from typing import cast
 
-from harle_domain.messaging import TelegramUpdateReceipt, TelegramUpdateState
+from harle_domain.messaging import (
+    MediaKind,
+    TelegramMediaReference,
+    TelegramUpdateReceipt,
+    TelegramUpdateState,
+)
 from harle_services.access import TemporaryBan
 from harle_services.messaging import (
     MessageCoordinator,
+    MessageFragment,
     MessageSubmissionStatus,
 )
 
@@ -46,6 +52,9 @@ class FakeTelegramUpdates:
     async def mark_interrupted(self, update_ids: Sequence[int]) -> None:
         self._mark(update_ids, TelegramUpdateState.INTERRUPTED)
 
+    async def mark_rejected(self, update_ids: Sequence[int]) -> None:
+        self._mark(update_ids, TelegramUpdateState.REJECTED)
+
     def _mark(
         self,
         update_ids: Sequence[int],
@@ -58,6 +67,20 @@ class FakeTelegramUpdates:
 async def _wait_forever() -> object:
     await asyncio.Event().wait()
     return object()
+
+
+def _message(
+    update_id: int,
+    text: str,
+    media: TelegramMediaReference | None = None,
+) -> MessageFragment:
+    return MessageFragment(
+        update_id=update_id,
+        telegram_user_id=10,
+        telegram_chat_id=20,
+        text=text,
+        media=media,
+    )
 
 
 def test_coordinator_deduplicates_active_and_delivered_updates() -> None:
@@ -76,37 +99,12 @@ def test_coordinator_deduplicates_active_and_delivered_updates() -> None:
 
         coordinator = MessageCoordinator(updates, rate_limit)
 
-        first = await coordinator.receive(
-            update_id=1,
-            telegram_user_id=10,
-            telegram_chat_id=20,
-            text="Hello",
-        )
-        active_duplicate = await coordinator.receive(
-            update_id=1,
-            telegram_user_id=10,
-            telegram_chat_id=20,
-            text="Hello",
-        )
+        first = await coordinator.receive(_message(1, "Hello"))
+        active_duplicate = await coordinator.receive(_message(1, "Hello"))
         updates.states[2] = TelegramUpdateState.DELIVERED
-        delivered_duplicate = await coordinator.receive(
-            update_id=2,
-            telegram_user_id=10,
-            telegram_chat_id=20,
-            text="Done",
-        )
-        limited = await coordinator.receive(
-            update_id=3,
-            telegram_user_id=10,
-            telegram_chat_id=20,
-            text="Too fast",
-        )
-        limited_duplicate = await coordinator.receive(
-            update_id=3,
-            telegram_user_id=10,
-            telegram_chat_id=20,
-            text="Too fast",
-        )
+        delivered_duplicate = await coordinator.receive(_message(2, "Done"))
+        limited = await coordinator.receive(_message(3, "Too fast"))
+        limited_duplicate = await coordinator.receive(_message(3, "Too fast"))
 
         assert first.status is MessageSubmissionStatus.STARTED
         assert active_duplicate.status is MessageSubmissionStatus.DUPLICATE
@@ -122,10 +120,17 @@ def test_coordinator_joins_ordered_messages_and_cancels_pre_tool_reasoning() -> 
     async def verify() -> None:
         coordinator = MessageCoordinator(FakeTelegramUpdates(), lambda _: None)
         await coordinator.receive(
-            update_id=1,
-            telegram_user_id=10,
-            telegram_chat_id=20,
-            text="First",
+            _message(
+                1,
+                "First",
+                TelegramMediaReference(
+                update_id=1,
+                file_id="image",
+                file_unique_id="unique-image",
+                kind=MediaKind.IMAGE,
+                mime_type="image/jpeg",
+            ),
+            ),
         )
         turn = await coordinator.current_turn(10)
         assert turn is not None
@@ -136,12 +141,7 @@ def test_coordinator_joins_ordered_messages_and_cancels_pre_tool_reasoning() -> 
             task=cast(asyncio.Task[object], task),
         )
 
-        joined = await coordinator.receive(
-            update_id=2,
-            telegram_user_id=10,
-            telegram_chat_id=20,
-            text="Second",
-        )
+        joined = await coordinator.receive(_message(2, "Second"))
         await asyncio.sleep(0)
         restarted = await coordinator.current_turn(10)
 
@@ -150,6 +150,7 @@ def test_coordinator_joins_ordered_messages_and_cancels_pre_tool_reasoning() -> 
         assert restarted is not None
         assert restarted.update_ids == (1, 2)
         assert restarted.prompt == "[Message 1]\nFirst\n\n[Message 2]\nSecond"
+        assert [media.file_id for media in restarted.media] == ["image"]
 
     asyncio.run(verify())
 
@@ -157,12 +158,7 @@ def test_coordinator_joins_ordered_messages_and_cancels_pre_tool_reasoning() -> 
 def test_coordinator_queues_messages_after_tool_execution_starts() -> None:
     async def verify() -> None:
         coordinator = MessageCoordinator(FakeTelegramUpdates(), lambda _: None)
-        await coordinator.receive(
-            update_id=1,
-            telegram_user_id=10,
-            telegram_chat_id=20,
-            text="Create an event",
-        )
+        await coordinator.receive(_message(1, "Create an event"))
         turn = await coordinator.current_turn(10)
         assert turn is not None
         await coordinator.mark_tool_started(
@@ -170,12 +166,7 @@ def test_coordinator_queues_messages_after_tool_execution_starts() -> None:
             generation=turn.generation,
         )
 
-        queued = await coordinator.receive(
-            update_id=2,
-            telegram_user_id=10,
-            telegram_chat_id=20,
-            text="Also add lunch",
-        )
+        queued = await coordinator.receive(_message(2, "Also add lunch"))
         has_next = await coordinator.finish_delivered(
             telegram_user_id=10,
             update_ids=turn.update_ids,

@@ -10,8 +10,14 @@ from harle_domain.events import (
     EventStatus,
     EventType,
     InternalEvent,
-    NotificationStatus,
+    MonthlyRecurrence,
+    WeekDay,
+    WeeklyRecurrence,
     all_day_event_interval,
+    due_recurrence_interval,
+    recurrence_interval,
+    recurrence_overlaps_range,
+    recurs_on,
     timed_event_interval,
 )
 from harle_services.events import (
@@ -22,9 +28,103 @@ from harle_services.events import (
     TimedEventSchedule,
     UpdateEvent,
 )
-from harle_services.tools.internal_events import CreateEventArgs, UpdateEventArgs
+from harle_services.tools.internal_events import (
+    CreateEventArgs,
+    MonthlyRecurrenceArgs,
+    UpdateEventArgs,
+    WeeklyRecurrenceArgs,
+)
 
 NOW = datetime(2026, 8, 31, 12, tzinfo=timezone.utc)
+
+
+def test_recurrence_matches_weekdays_and_available_month_days() -> None:
+    weekly = WeeklyRecurrence(
+        frozenset({WeekDay.MONDAY, WeekDay.FRIDAY}),
+    )
+    monthly = MonthlyRecurrence(frozenset({15, 31}))
+
+    assert recurs_on(weekly, date(2026, 9, 4))
+    assert not recurs_on(weekly, date(2026, 9, 5))
+    assert recurs_on(monthly, date(2026, 10, 31))
+    assert not recurs_on(monthly, date(2026, 11, 30))
+
+
+def test_recurrence_rejects_empty_or_invalid_days() -> None:
+    with pytest.raises(ValueError):
+        WeeklyRecurrence(frozenset())
+    with pytest.raises(ValueError):
+        MonthlyRecurrence(frozenset())
+    with pytest.raises(ValueError):
+        MonthlyRecurrence(frozenset({0, 32}))
+
+
+def test_recurrence_preserves_timed_and_all_day_spans() -> None:
+    timed = timed_event_interval(
+        starts_at=datetime(2026, 9, 1, 23),
+        ends_at=datetime(2026, 9, 2, 1),
+        timezone_name="America/Argentina/Cordoba",
+    )
+    all_day = all_day_event_interval(
+        start_date=date(2026, 9, 1),
+        end_date=date(2026, 9, 2),
+        timezone_name="America/Argentina/Cordoba",
+    )
+    rule = WeeklyRecurrence(frozenset({WeekDay.FRIDAY}))
+
+    timed_occurrence = recurrence_interval(
+        interval=timed,
+        rule=rule,
+        local_date=date(2026, 9, 4),
+    )
+    all_day_occurrence = recurrence_interval(
+        interval=all_day,
+        rule=rule,
+        local_date=date(2026, 9, 4),
+    )
+
+    assert timed_occurrence is not None
+    assert timed_occurrence.ends_at - timed_occurrence.starts_at == timedelta(hours=2)
+    assert all_day_occurrence is not None
+    assert all_day_occurrence.ends_at - all_day_occurrence.starts_at == timedelta(
+        days=2,
+    )
+
+
+def test_recurrence_range_and_notification_use_virtual_occurrences() -> None:
+    interval = timed_event_interval(
+        starts_at=datetime(2026, 9, 1, 0, 5),
+        ends_at=datetime(2026, 9, 1, 1, 5),
+        timezone_name="UTC",
+    )
+    rule = WeeklyRecurrence(frozenset({WeekDay.TUESDAY}))
+    current_time = datetime(2026, 9, 7, 23, 50, tzinfo=timezone.utc)
+
+    assert recurrence_overlaps_range(
+        interval=interval,
+        rule=rule,
+        starts_at=datetime(2026, 9, 8, tzinfo=timezone.utc),
+        ends_at=datetime(2026, 9, 9, tzinfo=timezone.utc),
+    )
+    due = due_recurrence_interval(
+        interval=interval,
+        rule=rule,
+        notify_before=timedelta(minutes=15),
+        last_notified_at=None,
+        current_time=current_time,
+    )
+    assert due is not None
+    assert due.starts_at == datetime(2026, 9, 8, 0, 5, tzinfo=timezone.utc)
+    assert (
+        due_recurrence_interval(
+            interval=interval,
+            rule=rule,
+            notify_before=timedelta(minutes=15),
+            last_notified_at=current_time,
+            current_time=datetime(2026, 9, 8, 0, tzinfo=timezone.utc),
+        )
+        is None
+    )
 
 
 class FakeEventRepository:
@@ -46,14 +146,14 @@ class FakeEventRepository:
         *,
         user_id: UUID,
         event_id: UUID,
-        include_cancelled: bool = False,
+        include_disabled: bool = False,
     ) -> InternalEvent | None:
         event = self.events.get(event_id)
         if event is None or event.user_id != user_id:
             return None
-        if event.status is EventStatus.SCHEDULED:
+        if event.status is EventStatus.ACTIVE:
             return event
-        if include_cancelled and event.status is EventStatus.CANCELLED:
+        if include_disabled and event.status is EventStatus.DISABLED:
             return event
         return None
 
@@ -63,17 +163,19 @@ class FakeEventRepository:
         user_id: UUID,
         starts_at: datetime,
         ends_at: datetime,
-        include_cancelled: bool = False,
+        include_disabled: bool = False,
     ) -> Sequence[InternalEvent]:
         return [
             event
             for event in self.events.values()
             if event.user_id == user_id
-            and event.starts_at < ends_at
-            and event.ends_at > starts_at
             and (
-                event.status is EventStatus.SCHEDULED
-                or (include_cancelled and event.status is EventStatus.CANCELLED)
+                event.recurrence_rule is not None
+                or (event.starts_at < ends_at and event.ends_at > starts_at)
+            )
+            and (
+                event.status is EventStatus.ACTIVE
+                or (include_disabled and event.status is EventStatus.DISABLED)
             )
         ]
 
@@ -86,9 +188,16 @@ class FakeEventRepository:
         due = [
             event
             for event in self.events.values()
-            if event.status is EventStatus.SCHEDULED
-            and event.notification_status is NotificationStatus.PENDING
-            and event.notification_window_start <= current_time < event.starts_at
+            if event.status is EventStatus.ACTIVE
+            and (
+                event.recurrence_rule is not None
+                or (
+                    event.last_notified_at is None
+                    and event.notification_window_start
+                    <= current_time
+                    < event.starts_at
+                )
+            )
         ]
         return sorted(
             due,
@@ -105,33 +214,55 @@ class FakeEventRepository:
         user_id: UUID,
         event: InternalEvent,
     ) -> InternalEvent | None:
-        current = await self.get(user_id=user_id, event_id=event.id)
+        current = await self.get(
+            user_id=user_id,
+            event_id=event.id,
+            include_disabled=True,
+        )
         if current is None:
             return None
         self.events[event.id] = event
         return event
 
-    async def cancel(
+    async def disable(
         self,
         *,
         user_id: UUID,
         event_id: UUID,
-        cancelled_at: datetime,
+        updated_at: datetime,
     ) -> InternalEvent | None:
         current = await self.get(user_id=user_id, event_id=event_id)
         if current is None:
             return None
-        cancelled = replace(
+        disabled = replace(
             current,
-            details=replace(current.details, status=EventStatus.CANCELLED),
-            timestamps=replace(
-                current.timestamps,
-                updated_at=cancelled_at,
-                cancelled_at=cancelled_at,
-            ),
+            details=replace(current.details, status=EventStatus.DISABLED),
+            timestamps=replace(current.timestamps, updated_at=updated_at),
         )
-        self.events[event_id] = cancelled
-        return cancelled
+        self.events[event_id] = disabled
+        return disabled
+
+    async def enable(
+        self,
+        *,
+        user_id: UUID,
+        event_id: UUID,
+        updated_at: datetime,
+    ) -> InternalEvent | None:
+        current = await self.get(
+            user_id=user_id,
+            event_id=event_id,
+            include_disabled=True,
+        )
+        if current is None or current.status is not EventStatus.DISABLED:
+            return None
+        enabled = replace(
+            current,
+            details=replace(current.details, status=EventStatus.ACTIVE),
+            timestamps=replace(current.timestamps, updated_at=updated_at),
+        )
+        self.events[event_id] = enabled
+        return enabled
 
     async def mark_notification_delivered(
         self,
@@ -148,7 +279,7 @@ class FakeEventRepository:
             current,
             notification=replace(
                 current.notification,
-                status=NotificationStatus.DELIVERED,
+                last_notified_at=updated_at,
             ),
             timestamps=replace(current.timestamps, updated_at=updated_at),
         )
@@ -191,7 +322,7 @@ def test_event_intervals_convert_local_and_all_day_boundaries() -> None:
         )
 
 
-def test_event_service_isolates_cancellation_and_physical_deletion() -> None:
+def test_event_service_isolates_disable_enable_and_physical_deletion() -> None:
     async def verify() -> None:
         repository = FakeEventRepository()
         service = EventService(repository, clock=lambda: NOW)
@@ -210,7 +341,8 @@ def test_event_service_isolates_cancellation_and_physical_deletion() -> None:
             ),
         )
         assert event.event_type is EventType.USER_EVENT
-        assert event.notification_status is NotificationStatus.PENDING
+        assert event.status is EventStatus.ACTIVE
+        assert event.last_notified_at is None
         assert event.notification_window_start == datetime(
             2026,
             9,
@@ -221,7 +353,7 @@ def test_event_service_isolates_cancellation_and_physical_deletion() -> None:
         )
         delivered = await service.mark_notification_delivered(event=event)
         assert delivered is not None
-        assert delivered.notification_status is NotificationStatus.DELIVERED
+        assert delivered.last_notified_at == NOW
 
         assert (
             await service.update(
@@ -246,38 +378,16 @@ def test_event_service_isolates_cancellation_and_physical_deletion() -> None:
         assert updated is not None
         assert updated.title == "Updated dentist"
         assert updated.all_day
-        assert updated.notification_status is NotificationStatus.PENDING
+        assert updated.last_notified_at is None
 
-        disabled = await service.update(
-            user_id=owner_id,
-            event_id=event.id,
-            changes=UpdateEvent(notifications_enabled=False),
-        )
+        disabled = await service.disable(user_id=owner_id, event_id=event.id)
         assert disabled is not None
-        assert disabled.notification_status is NotificationStatus.DISABLED
-        disabled_rescheduled = await service.update(
-            user_id=owner_id,
-            event_id=event.id,
-            changes=UpdateEvent(
-                schedule=TimedEventSchedule(
-                    starts_at=datetime(2026, 9, 3, 15),
-                    ends_at=datetime(2026, 9, 3, 16),
-                    timezone_name="America/Argentina/Cordoba",
-                ),
-            ),
-        )
-        assert disabled_rescheduled is not None
-        assert disabled_rescheduled.notification_status is NotificationStatus.DISABLED
-        reenabled = await service.update(
-            user_id=owner_id,
-            event_id=event.id,
-            changes=UpdateEvent(notifications_enabled=True),
-        )
+        assert disabled.status is EventStatus.DISABLED
+        reenabled = await service.enable(user_id=owner_id, event_id=event.id)
         assert reenabled is not None
-        assert reenabled.notification_status is NotificationStatus.PENDING
+        assert reenabled.status is EventStatus.ACTIVE
 
-        cancelled = await service.cancel(user_id=owner_id, event_id=event.id)
-        assert cancelled is not None
+        assert await service.disable(user_id=owner_id, event_id=event.id)
         assert not await service.list_for_range(
             user_id=owner_id,
             query=EventQuery(
@@ -292,7 +402,7 @@ def test_event_service_isolates_cancellation_and_physical_deletion() -> None:
                 start_date=date(2026, 9, 1),
                 end_date=date(2026, 9, 3),
                 timezone_name="America/Argentina/Cordoba",
-                include_cancelled=True,
+                include_disabled=True,
             ),
         )
 
@@ -305,10 +415,75 @@ def test_event_service_isolates_cancellation_and_physical_deletion() -> None:
                 start_date=date(2026, 9, 1),
                 end_date=date(2026, 9, 3),
                 timezone_name="America/Argentina/Cordoba",
-                include_cancelled=True,
+                include_disabled=True,
             ),
         )
         assert await service.delete(user_id=other_id, event_id=event.id) is None
+
+    asyncio.run(verify())
+
+
+def test_event_service_lists_and_repeats_recurring_notifications() -> None:
+    async def verify() -> None:
+        repository = FakeEventRepository()
+        owner_id = uuid4()
+        recurrence = WeeklyRecurrence(frozenset({WeekDay.TUESDAY}))
+        service = EventService(repository, clock=lambda: NOW)
+        event = await service.create(
+            user_id=owner_id,
+            event=CreateEvent(
+                title="Weekly appointment",
+                description="",
+                schedule=TimedEventSchedule(
+                    starts_at=datetime(2026, 9, 1, 15),
+                    ends_at=datetime(2026, 9, 1, 16),
+                    timezone_name="UTC",
+                ),
+                recurrence_rule=recurrence,
+            ),
+        )
+
+        october_events = await service.list_for_range(
+            user_id=owner_id,
+            query=EventQuery(
+                start_date=date(2026, 10, 6),
+                end_date=date(2026, 10, 6),
+                timezone_name="UTC",
+            ),
+        )
+        assert [listed.id for listed in october_events] == [event.id]
+
+        first_due_service = EventService(
+            repository,
+            clock=lambda: datetime(2026, 9, 1, 14, 50, tzinfo=timezone.utc),
+        )
+        first_due = await first_due_service.list_due_for_notification()
+        assert [due.starts_at for due in first_due] == [
+            datetime(2026, 9, 1, 15, tzinfo=timezone.utc),
+        ]
+        assert await first_due_service.mark_notification_delivered(
+            event=first_due[0],
+        )
+        assert not await first_due_service.list_due_for_notification()
+
+        second_due_service = EventService(
+            repository,
+            clock=lambda: datetime(2026, 9, 8, 14, 50, tzinfo=timezone.utc),
+        )
+        second_due = await second_due_service.list_due_for_notification()
+        assert [due.starts_at for due in second_due] == [
+            datetime(2026, 9, 8, 15, tzinfo=timezone.utc),
+        ]
+        one_time = await service.update(
+            user_id=owner_id,
+            event_id=event.id,
+            changes=UpdateEvent(
+                recurrence_rule=None,
+                replace_recurrence=True,
+            ),
+        )
+        assert one_time is not None
+        assert one_time.recurrence_rule is None
 
     asyncio.run(verify())
 
@@ -330,7 +505,6 @@ def test_event_service_normalizes_notification_leads() -> None:
                 description="",
                 schedule=schedule,
                 notify_before=timedelta(0),
-                notifications_enabled=False,
             ),
         )
         custom = await service.create(
@@ -346,7 +520,7 @@ def test_event_service_normalizes_notification_leads() -> None:
         assert defaulted.starts_at - defaulted.notification_window_start == timedelta(
             minutes=15,
         )
-        assert defaulted.notification_status is NotificationStatus.DISABLED
+        assert defaulted.last_notified_at is None
         preserved = await service.update(
             user_id=owner_id,
             event_id=custom.id,
@@ -412,3 +586,29 @@ def test_event_tool_preserves_omitted_zero_and_positive_notification_leads() -> 
         ).notify_minutes_before
         == 30
     )
+
+
+def test_event_tool_validates_symmetric_recurrence_rules() -> None:
+    schedule = {
+        "title": "Reminder",
+        "starts_at": datetime(2026, 9, 1, 15),
+        "ends_at": datetime(2026, 9, 1, 16),
+    }
+    weekly = CreateEventArgs(
+        **schedule,
+        recurrence_rule={"week_days": ["monday", "friday"]},
+    )
+    monthly = CreateEventArgs(
+        **schedule,
+        recurrence_rule={"month_days": [1, 15, 31]},
+    )
+
+    assert isinstance(weekly.recurrence_rule, WeeklyRecurrenceArgs)
+    assert isinstance(monthly.recurrence_rule, MonthlyRecurrenceArgs)
+    assert not UpdateEventArgs(event_id=uuid4(), title="Keep").replaces_recurrence
+    assert UpdateEventArgs(
+        event_id=uuid4(),
+        recurrence_rule=None,
+    ).replaces_recurrence
+    with pytest.raises(ValueError):
+        CreateEventArgs(**schedule, recurrence_rule={"month_days": [0]})

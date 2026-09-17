@@ -17,6 +17,7 @@ async def create_runtime(settings: ApiSettings) -> ApiRuntime:
             pool_max_size=settings.POSTGRES_POOL_MAX_SIZE,
             telegram_bot_token=settings.TELEGRAM_BOT_TOKEN,
             scheduler_interval_seconds=settings.EVENT_SCHEDULER_INTERVAL_SECONDS,
+            maximum_media_request_size=settings.MAX_MEDIA_REQUEST_SIZE,
         ),
     )
 

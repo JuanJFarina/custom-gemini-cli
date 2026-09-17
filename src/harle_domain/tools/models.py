@@ -8,12 +8,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from harle_domain.messaging import MediaContent
 from harle_utils import ToolUnavailableError
 
 
 class ToolFamily(str, Enum):
     INTERNAL_EXPENSES = "internal_expenses"
     INTERNAL_EVENTS = "internal_events"
+    RECENT_MEDIA = "recent_media"
     PROFILES = "profiles"
     LEGACY_GOOGLE_SHEETS_EXPENSES = "legacy_google_sheets_expenses"
 
@@ -38,6 +40,9 @@ class ToolCallAction(BaseModel):
 class ToolCallResult(BaseModel):
     called_tool_name: str
     result: object
+    media: MediaContent | None = Field(default=None, exclude=True)
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class InternalToolCallInteraction(BaseModel):

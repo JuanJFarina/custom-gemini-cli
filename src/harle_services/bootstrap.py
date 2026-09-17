@@ -6,7 +6,11 @@ import asyncpg
 from harle_domain.conversations.ports import ConversationStore
 from harle_domain.events import EventRepository
 from harle_domain.expenses import ExpenseRepository
-from harle_domain.messaging import OutboundMessenger
+from harle_domain.messaging import (
+    OutboundMessenger,
+    RecentMediaStore,
+    TelegramMediaDownloader,
+)
 from harle_infrastructure.google_sheets import (
     GoogleSheetsClientFactory,
     LegacyGoogleSheetsSettings,
@@ -23,7 +27,7 @@ from harle_infrastructure.postgres import (
     create_postgres_pool,
     validate_postgres_schema,
 )
-from harle_infrastructure.telegram import TelegramMessenger
+from harle_infrastructure.telegram import InMemoryRecentMediaStore, TelegramMessenger
 from harle_services.access import PreflightService
 from harle_services.events import (
     AgentsScheduler,
@@ -41,7 +45,16 @@ from harle_services.tools import (
     create_internal_events_registration,
     create_internal_expenses_registration,
     create_legacy_google_sheets_registration,
+    create_recent_media_registration,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class TelegramRuntime:
+    messenger: OutboundMessenger
+    media_downloader: TelegramMediaDownloader
+    recent_media: RecentMediaStore
+    maximum_media_request_size: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,8 +64,24 @@ class ProcessRuntime:
     users: UserRuntimeFactory
     tools: ToolsInjector
     messages: MessageCoordinator
-    messenger: OutboundMessenger
+    telegram: TelegramRuntime
     scheduler: AgentsScheduler
+
+    @property
+    def messenger(self) -> OutboundMessenger:
+        return self.telegram.messenger
+
+    @property
+    def media_downloader(self) -> TelegramMediaDownloader:
+        return self.telegram.media_downloader
+
+    @property
+    def recent_media(self) -> RecentMediaStore:
+        return self.telegram.recent_media
+
+    @property
+    def maximum_media_request_size(self) -> int:
+        return self.telegram.maximum_media_request_size
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +91,7 @@ class ProcessRuntimeConfig:
     pool_max_size: int
     telegram_bot_token: str
     scheduler_interval_seconds: float = 300
+    maximum_media_request_size: int = 12 * 1024 * 1024
 
 
 def create_tools_injector(
@@ -69,6 +99,8 @@ def create_tools_injector(
     *,
     expense_repository: ExpenseRepository | None = None,
     event_repository: EventRepository | None = None,
+    recent_media_store: RecentMediaStore | None = None,
+    media_downloader: TelegramMediaDownloader | None = None,
 ) -> ToolsInjector:
     legacy_settings = settings or LegacyGoogleSheetsSettings()
     registrations: list[ToolFamilyRegistration] = [
@@ -86,6 +118,15 @@ def create_tools_injector(
         registrations.append(
             create_internal_events_registration(
                 EventService(event_repository),
+            ),
+        )
+    if (recent_media_store is None) != (media_downloader is None):
+        raise ValueError("Recent media store and downloader must be supplied together.")
+    if recent_media_store is not None and media_downloader is not None:
+        registrations.append(
+            create_recent_media_registration(
+                recent_media_store,
+                media_downloader,
             ),
         )
     registry = ToolRegistry(
@@ -130,7 +171,11 @@ def _build_process_runtime(
     accounts = PostgresAccountRepository(pool)
     conversations = PostgresConversationRepository(pool)
     event_repository = PostgresEventRepository(pool)
-    messenger = TelegramMessenger(config.telegram_bot_token)
+    messenger = TelegramMessenger(
+        config.telegram_bot_token,
+        maximum_media_size=config.maximum_media_request_size,
+    )
+    recent_media = InMemoryRecentMediaStore()
     users = _create_user_runtime_factory(
         pool,
         conversations,
@@ -152,12 +197,19 @@ def _build_process_runtime(
             legacy_settings,
             expense_repository=PostgresExpenseRepository(pool),
             event_repository=event_repository,
+            recent_media_store=recent_media,
+            media_downloader=messenger,
         ),
         messages=MessageCoordinator(
             PostgresTelegramUpdateRepository(pool),
             preflight.check_rate_limit,
         ),
-        messenger=messenger,
+        telegram=TelegramRuntime(
+            messenger=messenger,
+            media_downloader=messenger,
+            recent_media=recent_media,
+            maximum_media_request_size=config.maximum_media_request_size,
+        ),
         scheduler=AgentsScheduler(
             events=EventService(event_repository),
             notifications=notifications,

@@ -1,3 +1,4 @@
 from .client import TelegramMessenger
+from .recent_media import InMemoryRecentMediaStore
 
-__all__ = ["TelegramMessenger"]
+__all__ = ["InMemoryRecentMediaStore", "TelegramMessenger"]

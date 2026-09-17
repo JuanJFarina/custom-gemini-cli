@@ -7,7 +7,11 @@ from uuid import UUID, uuid4
 import asyncpg
 import pytest
 
-from harle_domain.events import EventStatus, NotificationStatus
+from harle_domain.events import (
+    EventStatus,
+    WeekDay,
+    WeeklyRecurrence,
+)
 from harle_infrastructure.postgres import (
     PostgresEventRepository,
     create_postgres_pool,
@@ -93,7 +97,7 @@ async def verify_event_isolation(database_url: str) -> None:
                 ),
             ),
         )
-        await service.create(
+        disabled_event = await service.create(
             user_id=first_id,
             event=CreateEvent(
                 title="Disabled event",
@@ -103,7 +107,25 @@ async def verify_event_isolation(database_url: str) -> None:
                     ends_at=datetime(2026, 9, 1, 11),
                     timezone_name="UTC",
                 ),
-                notifications_enabled=False,
+            ),
+        )
+        assert await service.disable(
+            user_id=first_id,
+            event_id=disabled_event.id,
+        )
+        recurring = await service.create(
+            user_id=first_id,
+            event=CreateEvent(
+                title="Recurring event",
+                description="Weekly",
+                schedule=TimedEventSchedule(
+                    starts_at=datetime(2026, 9, 1, 10),
+                    ends_at=datetime(2026, 9, 1, 11),
+                    timezone_name="UTC",
+                ),
+                recurrence_rule=WeeklyRecurrence(
+                    frozenset({WeekDay.TUESDAY}),
+                ),
             ),
         )
         due_service = EventService(
@@ -118,10 +140,10 @@ async def verify_event_isolation(database_url: str) -> None:
             ),
         )
         due_events = await due_service.list_due_for_notification()
-        assert [event.id for event in due_events] == [first.id]
+        assert {event.id for event in due_events} == {first.id, recurring.id}
         delivered = await due_service.mark_notification_delivered(event=first)
         assert delivered is not None
-        assert delivered.notification_status is NotificationStatus.DELIVERED
+        assert delivered.last_notified_at == due_service.clock()
 
         first_events = await service.list_for_range(
             user_id=first_id,
@@ -150,7 +172,7 @@ async def verify_event_isolation(database_url: str) -> None:
             )
             is None
         )
-        assert await service.cancel(user_id=second_id, event_id=first.id) is None
+        assert await service.disable(user_id=second_id, event_id=first.id) is None
         assert await service.delete(user_id=second_id, event_id=first.id) is None
 
         updated = await due_service.update(
@@ -160,7 +182,7 @@ async def verify_event_isolation(database_url: str) -> None:
         )
         assert updated is not None
         assert updated.title == "Updated first event"
-        assert updated.notification_status is NotificationStatus.DELIVERED
+        assert updated.last_notified_at == due_service.clock()
         rescheduled = await due_service.update(
             user_id=first_id,
             event_id=first.id,
@@ -173,20 +195,20 @@ async def verify_event_isolation(database_url: str) -> None:
             ),
         )
         assert rescheduled is not None
-        assert rescheduled.notification_status is NotificationStatus.PENDING
-        cancelled = await due_service.cancel(user_id=first_id, event_id=first.id)
-        assert cancelled is not None
-        assert cancelled.status is EventStatus.CANCELLED
+        assert rescheduled.last_notified_at is None
+        disabled = await due_service.disable(user_id=first_id, event_id=first.id)
+        assert disabled is not None
+        assert disabled.status is EventStatus.DISABLED
         deleted = await service.delete(user_id=first_id, event_id=first.id)
         assert deleted is not None
-        assert deleted.status is EventStatus.CANCELLED
+        assert deleted.status is EventStatus.DISABLED
         assert not await service.list_for_range(
             user_id=first_id,
             query=EventQuery(
                 start_date=date(2026, 9, 1),
                 end_date=date(2026, 9, 1),
                 timezone_name="UTC",
-                include_cancelled=True,
+                include_disabled=True,
             ),
         )
     finally:

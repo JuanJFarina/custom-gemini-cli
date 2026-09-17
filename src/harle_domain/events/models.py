@@ -6,8 +6,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 class EventStatus(str, Enum):
-    SCHEDULED = "scheduled"
-    CANCELLED = "cancelled"
+    ACTIVE = "active"
+    DISABLED = "disabled"
 
 
 class EventType(str, Enum):
@@ -15,10 +15,37 @@ class EventType(str, Enum):
     SYSTEM_EVENT = "system_event"
 
 
-class NotificationStatus(str, Enum):
-    DISABLED = "disabled"
-    PENDING = "pending"
-    DELIVERED = "delivered"
+class WeekDay(str, Enum):
+    MONDAY = "monday"
+    TUESDAY = "tuesday"
+    WEDNESDAY = "wednesday"
+    THURSDAY = "thursday"
+    FRIDAY = "friday"
+    SATURDAY = "saturday"
+    SUNDAY = "sunday"
+
+
+@dataclass(frozen=True, slots=True)
+class WeeklyRecurrence:
+    days: frozenset[WeekDay]
+
+    def __post_init__(self) -> None:
+        if not self.days:
+            raise ValueError("Weekly recurrence requires at least one weekday.")
+
+
+@dataclass(frozen=True, slots=True)
+class MonthlyRecurrence:
+    days: frozenset[int]
+
+    def __post_init__(self) -> None:
+        if not self.days:
+            raise ValueError("Monthly recurrence requires at least one month day.")
+        if not all(1 <= day <= 31 for day in self.days):
+            raise ValueError("Month days must be between 1 and 31.")
+
+
+RecurrenceRule = WeeklyRecurrence | MonthlyRecurrence
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,22 +88,21 @@ class EventDetails:
 class EventTimestamps:
     created_at: datetime
     updated_at: datetime
-    cancelled_at: datetime | None = None
 
     def __post_init__(self) -> None:
         _require_aware(self.created_at, "Event creation time")
         _require_aware(self.updated_at, "Event update time")
-        if self.cancelled_at is not None:
-            _require_aware(self.cancelled_at, "Event cancellation time")
 
 
 @dataclass(frozen=True, slots=True)
 class EventNotification:
     window_start: datetime
-    status: NotificationStatus
+    last_notified_at: datetime | None = None
 
     def __post_init__(self) -> None:
         _require_utc(self.window_start, "Event notification window start")
+        if self.last_notified_at is not None:
+            _require_utc(self.last_notified_at, "Event last notification time")
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,14 +112,11 @@ class InternalEvent:
     details: EventDetails
     notification: EventNotification
     timestamps: EventTimestamps
+    recurrence_rule: RecurrenceRule | None = None
 
     def __post_init__(self) -> None:
         if self.notification_window_start >= self.starts_at:
             raise ValueError("Event notification window must start before the event.")
-        if self.status is EventStatus.SCHEDULED and self.cancelled_at is not None:
-            raise ValueError("A scheduled event cannot have a cancellation time.")
-        if self.status is EventStatus.CANCELLED and self.cancelled_at is None:
-            raise ValueError("A cancelled event requires a cancellation time.")
 
     @property
     def title(self) -> str:
@@ -132,12 +155,8 @@ class InternalEvent:
         return self.notification.window_start
 
     @property
-    def notification_status(self) -> NotificationStatus:
-        return self.notification.status
-
-    @property
-    def notifications_enabled(self) -> bool:
-        return self.notification_status is not NotificationStatus.DISABLED
+    def last_notified_at(self) -> datetime | None:
+        return self.notification.last_notified_at
 
     @property
     def created_at(self) -> datetime:
@@ -146,10 +165,6 @@ class InternalEvent:
     @property
     def updated_at(self) -> datetime:
         return self.timestamps.updated_at
-
-    @property
-    def cancelled_at(self) -> datetime | None:
-        return self.timestamps.cancelled_at
 
 
 def _require_utc(value: datetime, label: str) -> None:

@@ -1,17 +1,20 @@
 import re
 from asyncio import create_task, gather
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from time import time
+from uuid import UUID
 
 from google.genai import Client
 from google.genai.types import (
     GenerateContentConfig,
     GenerateContentResponse,
     GoogleSearch,
+    Part,
     Tool,
 )
 from pydantic import BaseModel, ConfigDict
 
+from harle_domain.messaging import MediaContent
 from harle_domain.tools.models import (
     InternalToolCallInteraction,
     ToolCall,
@@ -48,7 +51,11 @@ class Harle(BaseModel):
     def model_post_init(self, _: object, /) -> None:
         self._client = self._client or Client(api_key=self.config.api_key)
 
-    async def call(self, prompt: str) -> HarleRunResult:
+    async def call(
+        self,
+        prompt: str,
+        media: Sequence[MediaContent] = (),
+    ) -> HarleRunResult:
         start_time = time()
         log.info("Loading conversations and current weather")
         conversations_task = create_task(self.stores.conversation_store.load())
@@ -69,6 +76,7 @@ class Harle(BaseModel):
         run_result = await self._reason_and_act(
             prompt=prompt,
             system_instruction=system_instruction,
+            media=media,
         )
         log.info(f"Reason and act loop took {time() - start_time} seconds")
         return run_result
@@ -98,6 +106,7 @@ class Harle(BaseModel):
         self,
         prompt: str,
         system_instruction: str,
+        media: Sequence[MediaContent],
         tool_interactions: list[InternalToolCallInteraction] | None = None,
     ) -> HarleRunResult:
         tool_interactions = tool_interactions or []
@@ -114,10 +123,11 @@ class Harle(BaseModel):
             system_instruction=system_instruction,
             prompt=prompt,
             tool_results=tool_results,
+            media=media,
         )
 
         if harle_thought.action == "respond":
-            log.info(f"Harle thought to respond")
+            log.info("Harle thought to respond")
             if not harle_thought.response:
                 log.warning("Action is respond but response is empty")
             return HarleRunResult(
@@ -137,6 +147,7 @@ class Harle(BaseModel):
             return await self._reason_and_act(
                 prompt=prompt,
                 system_instruction=system_instruction,
+                media=media,
                 tool_interactions=tool_interactions + [interaction],
             )
         log.warning(f"Unknown action: {harle_thought.action}")
@@ -151,6 +162,7 @@ class Harle(BaseModel):
         system_instruction: str,
         prompt: str,
         tool_results: list[ToolCallResult],
+        media: Sequence[MediaContent],
     ) -> HarleThought:
         for result in tool_results:
             prompt = self._update_prompt(prompt=prompt, tool_result=result)
@@ -158,7 +170,7 @@ class Harle(BaseModel):
         gemini_response: GenerateContentResponse = (
             await self._client.aio.models.generate_content(
                 model=self.config.model,
-                contents=prompt,
+                contents=_gemini_contents(prompt, media, tool_results),
                 config=GenerateContentConfig(
                     system_instruction=system_instruction,
                     tools=[
@@ -283,3 +295,29 @@ def _tool_results(
         for interaction in tool_interactions
         for result in interaction.tool_results
     ]
+
+
+def _gemini_contents(
+    prompt: str,
+    media: Sequence[MediaContent],
+    tool_results: Sequence[ToolCallResult],
+) -> list[str | Part]:
+    contents: list[str | Part] = []
+    attachment_ids: set[UUID] = set()
+    loaded_media = [
+        *media,
+        *(result.media for result in tool_results if result.media is not None),
+    ]
+    for content in loaded_media:
+        attachment_id = content.reference.attachment_id
+        if attachment_id in attachment_ids:
+            continue
+        attachment_ids.add(attachment_id)
+        contents.append(
+            Part.from_bytes(
+                data=content.data,
+                mime_type=content.reference.mime_type,
+            ),
+        )
+    contents.append(prompt)
+    return contents

@@ -130,7 +130,8 @@ def test_tool_access_matrix_and_lazy_sheets_configuration() -> None:
         "list_events",
         "create_event",
         "update_event",
-        "cancel_event",
+        "disable_event",
+        "enable_event",
         "delete_event",
     }
 

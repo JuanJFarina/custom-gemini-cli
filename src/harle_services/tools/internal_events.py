@@ -1,12 +1,19 @@
 from collections.abc import Mapping
 from datetime import date, datetime, timedelta
-from typing import Literal, TypeVar
+from typing import Annotated, Literal, TypeVar
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from harle_domain.events import EventType, InternalEvent
+from harle_domain.events import (
+    EventType,
+    InternalEvent,
+    MonthlyRecurrence,
+    RecurrenceRule,
+    WeekDay,
+    WeeklyRecurrence,
+)
 from harle_domain.tools import (
     ToolCallResult,
     ToolDefinition,
@@ -31,10 +38,28 @@ ModelT = TypeVar("ModelT", bound=BaseModel)
 ScheduleKind = Literal["timed", "all_day"]
 
 
+class WeeklyRecurrenceArgs(BaseModel):
+    week_days: set[WeekDay] = Field(min_length=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+MonthDay = Annotated[int, Field(ge=1, le=31)]
+
+
+class MonthlyRecurrenceArgs(BaseModel):
+    month_days: set[MonthDay] = Field(min_length=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+RecurrenceArgs = WeeklyRecurrenceArgs | MonthlyRecurrenceArgs
+
+
 class ListEventsArgs(BaseModel):
     start_date: date
     end_date: date
-    include_cancelled: bool = False
+    include_disabled: bool = False
 
     model_config = ConfigDict(extra="forbid")
 
@@ -55,7 +80,7 @@ class CreateEventArgs(BaseModel):
     timezone: str | None = Field(default=None, min_length=1)
     event_type: EventType = EventType.USER_EVENT
     notify_minutes_before: int = Field(default=15, ge=0)
-    notifications_enabled: bool = True
+    recurrence_rule: RecurrenceArgs | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -76,9 +101,13 @@ class UpdateEventArgs(BaseModel):
     timezone: str | None = Field(default=None, min_length=1)
     event_type: EventType | None = None
     notify_minutes_before: int | None = Field(default=None, ge=0)
-    notifications_enabled: bool | None = None
+    recurrence_rule: RecurrenceArgs | None = None
 
     model_config = ConfigDict(extra="forbid")
+
+    @property
+    def replaces_recurrence(self) -> bool:
+        return "recurrence_rule" in self.model_fields_set
 
     @model_validator(mode="after")
     def validate_changes(self) -> "UpdateEventArgs":
@@ -89,9 +118,9 @@ class UpdateEventArgs(BaseModel):
             schedule_kind,
             self.event_type,
             self.notify_minutes_before,
-            self.notifications_enabled,
+            self.replaces_recurrence,
         )
-        if all(change is None for change in changes):
+        if changes == (None, None, None, None, None, False):
             raise ValueError("At least one event change is required.")
         return self
 
@@ -109,17 +138,19 @@ SHARED_INSTRUCTIONS = """For every internal event tool:
 - All-day events use start_date and inclusive end_date. Use the same date for a one-day event.
 - Use exactly one complete timed or all-day schedule. Updating a schedule may also change between timed and all-day.
 - Use user_event for the user's agenda and system_event for an internal reminder or task for the assistant.
-- notifications_enabled defaults to true. Disable it only when the user asks for no notification.
 - notify_minutes_before defaults to 15 on creation. Zero also means the default 15-minute lead. On update, omission preserves the current lead and zero resets it to 15.
-- Normal reads hide cancelled events; include them only when explicitly requested. Deletion is permanent.
-- Events are one-time and create one Telegram notification. They never create recurrence or external calendar work."""
+- recurrence_rule is either {"week_days": [...]} for infinite weekly recurrence or {"month_days": [...]} for infinite monthly recurrence. Omit it for a one-time event.
+- On update, omit recurrence_rule to preserve it or send null to make the event one-time.
+- Recurring events remain one event definition. A missing month day produces no occurrence, and every update changes the complete definition.
+- Normal reads hide disabled events; include them only when explicitly requested. Disabling is reversible and deletion is permanent.
+- Events never create external calendar work."""
 
 DEFINITIONS = (
     ToolDefinition(
         name="list_events",
         family=FAMILY,
         description=(
-            "List events overlapping an inclusive local date range. Cancelled "
+            "List events overlapping an inclusive local date range. Disabled "
             "events are optional."
         ),
         argument_model=ListEventsArgs,
@@ -129,7 +160,7 @@ DEFINITIONS = (
     ToolDefinition(
         name="create_event",
         family=FAMILY,
-        description="Create one timed or all-day event with a notification.",
+        description="Create a one-time or recurring timed or all-day event.",
         argument_model=CreateEventArgs,
         effect=ToolEffect.MODIFY,
         can_run_concurrently=False,
@@ -146,9 +177,17 @@ DEFINITIONS = (
         can_run_concurrently=False,
     ),
     ToolDefinition(
-        name="cancel_event",
+        name="disable_event",
         family=FAMILY,
-        description="Cancel an owned scheduled event by UUID.",
+        description="Disable an owned active event by UUID.",
+        argument_model=EventIdentifierArgs,
+        effect=ToolEffect.MODIFY,
+        can_run_concurrently=False,
+    ),
+    ToolDefinition(
+        name="enable_event",
+        family=FAMILY,
+        description="Re-enable an owned disabled event by UUID.",
         argument_model=EventIdentifierArgs,
         effect=ToolEffect.MODIFY,
         can_run_concurrently=False,
@@ -156,7 +195,7 @@ DEFINITIONS = (
     ToolDefinition(
         name="delete_event",
         family=FAMILY,
-        description="Permanently delete an owned scheduled or cancelled event by UUID.",
+        description="Permanently delete an owned active or disabled event by UUID.",
         argument_model=EventIdentifierArgs,
         effect=ToolEffect.MODIFY,
         can_run_concurrently=False,
@@ -179,7 +218,7 @@ def create_internal_events_registration(
                     start_date=validated.start_date,
                     end_date=validated.end_date,
                     timezone_name=context.timezone,
-                    include_cancelled=validated.include_cancelled,
+                    include_disabled=validated.include_disabled,
                 ),
             )
             return ToolCallResult(
@@ -205,7 +244,7 @@ def create_internal_events_registration(
                     notify_before=timedelta(
                         minutes=validated.notify_minutes_before,
                     ),
-                    notifications_enabled=validated.notifications_enabled,
+                    recurrence_rule=_recurrence_rule(validated.recurrence_rule),
                 ),
             )
             return ToolCallResult(
@@ -229,7 +268,8 @@ def create_internal_events_registration(
                         if validated.notify_minutes_before is not None
                         else None
                     ),
-                    notifications_enabled=validated.notifications_enabled,
+                    recurrence_rule=_recurrence_rule(validated.recurrence_rule),
+                    replace_recurrence=validated.replaces_recurrence,
                 ),
             )
             return ToolCallResult(
@@ -237,16 +277,28 @@ def create_internal_events_registration(
                 result=_mutation_payload(event, "updated"),
             )
 
-        async def cancel_event(args: BaseModel) -> ToolCallResult:
+        async def disable_event(args: BaseModel) -> ToolCallResult:
             context.require_family(FAMILY)
             validated = _require_model(args, EventIdentifierArgs)
-            event = await service.cancel(
+            event = await service.disable(
                 user_id=context.user_id,
                 event_id=validated.event_id,
             )
             return ToolCallResult(
-                called_tool_name="cancel_event",
-                result=_mutation_payload(event, "cancelled"),
+                called_tool_name="disable_event",
+                result=_mutation_payload(event, "disabled"),
+            )
+
+        async def enable_event(args: BaseModel) -> ToolCallResult:
+            context.require_family(FAMILY)
+            validated = _require_model(args, EventIdentifierArgs)
+            event = await service.enable(
+                user_id=context.user_id,
+                event_id=validated.event_id,
+            )
+            return ToolCallResult(
+                called_tool_name="enable_event",
+                result=_mutation_payload(event, "enabled"),
             )
 
         async def delete_event(args: BaseModel) -> ToolCallResult:
@@ -265,7 +317,8 @@ def create_internal_events_registration(
             "list_events": list_events,
             "create_event": create_event,
             "update_event": update_event,
-            "cancel_event": cancel_event,
+            "disable_event": disable_event,
+            "enable_event": enable_event,
             "delete_event": delete_event,
         }
 
@@ -344,6 +397,26 @@ def _schedule_kind(
     return None
 
 
+def _recurrence_rule(value: RecurrenceArgs | None) -> RecurrenceRule | None:
+    if isinstance(value, WeeklyRecurrenceArgs):
+        return WeeklyRecurrence(frozenset(value.week_days))
+    if isinstance(value, MonthlyRecurrenceArgs):
+        return MonthlyRecurrence(frozenset(value.month_days))
+    return None
+
+
+def _recurrence_payload(
+    value: RecurrenceRule | None,
+) -> Mapping[str, object] | None:
+    if isinstance(value, WeeklyRecurrence):
+        return {
+            "week_days": sorted(day.value for day in value.days),
+        }
+    if isinstance(value, MonthlyRecurrence):
+        return {"month_days": sorted(value.days)}
+    return None
+
+
 def _mutation_payload(
     event: InternalEvent | None,
     operation: str,
@@ -376,14 +449,18 @@ def _event_payload(event: InternalEvent) -> Mapping[str, object]:
         "all_day": event.all_day,
         "event_type": event.event_type.value,
         "status": event.status.value,
+        "recurrence_rule": _recurrence_payload(event.recurrence_rule),
         "notification_window_start": event.notification_window_start.astimezone(
             timezone_info,
         ).isoformat(),
         "notify_minutes_before": int(
             (event.starts_at - event.notification_window_start).total_seconds() / 60,
         ),
-        "notifications_enabled": event.notifications_enabled,
-        "notification_status": event.notification_status.value,
+        "last_notified_at": (
+            event.last_notified_at.astimezone(timezone_info).isoformat()
+            if event.last_notified_at is not None
+            else None
+        ),
     }
 
 

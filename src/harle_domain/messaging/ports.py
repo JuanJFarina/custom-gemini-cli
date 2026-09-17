@@ -2,6 +2,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, runtime_checkable
+from uuid import UUID
+
+from .models import MediaContent, RecentMedia, TelegramMediaReference
 
 
 class TelegramUpdateState(str, Enum):
@@ -13,6 +16,7 @@ class TelegramUpdateState(str, Enum):
     FAILED = "failed"
     RATE_LIMITED = "rate_limited"
     INTERRUPTED = "interrupted"
+    REJECTED = "rejected"
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,9 +48,38 @@ class TelegramUpdateRepository(Protocol):
 
     async def mark_interrupted(self, update_ids: Sequence[int]) -> None: ...
 
+    async def mark_rejected(self, update_ids: Sequence[int]) -> None: ...
+
 
 @runtime_checkable
 class OutboundMessenger(Protocol):
     async def send_message(self, *, chat_id: int, text: str) -> None: ...
 
     async def send_typing_action(self, *, chat_id: int) -> None: ...
+
+
+@runtime_checkable
+class TelegramMediaDownloader(Protocol):
+    async def download(
+        self,
+        reference: TelegramMediaReference,
+    ) -> MediaContent: ...
+
+
+@runtime_checkable
+class RecentMediaStore(Protocol):
+    def add(
+        self,
+        *,
+        user_id: UUID,
+        reference: TelegramMediaReference,
+    ) -> RecentMedia: ...
+
+    def list_recent(self, *, user_id: UUID) -> Sequence[RecentMedia]: ...
+
+    def get(
+        self,
+        *,
+        user_id: UUID,
+        attachment_id: UUID,
+    ) -> RecentMedia | None: ...

@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS public.telegram_update_claims (
             'delivered',
             'failed',
             'rate_limited',
-            'interrupted'
+            'interrupted',
+            'rejected'
         )
     )
 );
@@ -78,7 +79,8 @@ ALTER TABLE public.telegram_update_claims
             'delivered',
             'failed',
             'rate_limited',
-            'interrupted'
+            'interrupted',
+            'rejected'
         )
     );
 

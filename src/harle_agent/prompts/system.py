@@ -57,6 +57,8 @@ Schema 2 for one or more tool calls:
 - Read-only tool calls may run concurrently. Calls that modify data run in order.
 - Call only tools listed in Your Tools, using the exact name and argument schema.
 - Never call a modifying tool when the current message does not directly request that change.
+- Treat attached image and audio parts as content from the current user message.
+- When a message contains only an attachment marker, interpret the attachment and respond naturally.
 
 # Your Tools
 

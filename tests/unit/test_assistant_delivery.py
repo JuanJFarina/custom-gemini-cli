@@ -7,7 +7,12 @@ from pytest import MonkeyPatch
 import harle_api.assistant as assistant_module
 from harle_agent.agent import Harle
 from harle_agent.models import HarleRunResult
-from harle_domain.messaging import OutboundMessenger
+from harle_domain.messaging import (
+    OutboundMessenger,
+    RecentMediaStore,
+    TelegramMediaDownloader,
+)
+from harle_services.bootstrap import ProcessRuntime
 from harle_services.messaging import MessageCoordinator, MessageFragment, MessageTurn
 from harle_services.runtime import UserRuntime
 from harle_services.tools import ToolsInjector
@@ -84,9 +89,16 @@ def test_failed_telegram_delivery_does_not_persist_completion(
                 UserRuntime,
                 SimpleNamespace(telegram_chat_id=2),
             ),
-            coordinator=cast(MessageCoordinator, coordinator),
-            tools=cast(ToolsInjector, object()),
-            messenger=cast(OutboundMessenger, FailingMessenger()),
+            runtime=cast(
+                ProcessRuntime,
+                SimpleNamespace(
+                    messages=cast(MessageCoordinator, coordinator),
+                    tools=cast(ToolsInjector, object()),
+                    messenger=cast(OutboundMessenger, FailingMessenger()),
+                    media_downloader=cast(TelegramMediaDownloader, object()),
+                    recent_media=cast(RecentMediaStore, object()),
+                ),
+            ),
         )
 
         assert not harle.saved
