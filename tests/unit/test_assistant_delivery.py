@@ -16,7 +16,7 @@ from harle_services.bootstrap import ProcessRuntime
 from harle_services.messaging import MessageCoordinator, MessageFragment, MessageTurn
 from harle_services.runtime import UserRuntime
 from harle_services.tools import ToolsInjector
-from harle_utils import MessageDeliveryError
+from harle_utils import MessageDeliveryError, UnknownIdentityError
 
 
 class FakeHarle:
@@ -102,6 +102,50 @@ def test_failed_telegram_delivery_does_not_persist_completion(
         )
 
         assert not harle.saved
+        assert coordinator.finished_failed
+
+    asyncio.run(verify())
+
+
+class RecordingMessenger:
+    def __init__(self) -> None:
+        self.sent: list[tuple[int, str]] = []
+
+    async def send_message(self, *, chat_id: int, text: str) -> None:
+        self.sent.append((chat_id, text))
+
+
+def test_unknown_telegram_identity_notifies_sender() -> None:
+    async def verify() -> None:
+        turn = MessageTurn(
+            telegram_user_id=99,
+            telegram_chat_id=2,
+            messages=(MessageFragment(3, 99, 2, "Hello"),),
+            generation=0,
+        )
+        coordinator = FakeCoordinator(turn)
+        messenger = RecordingMessenger()
+
+        class UnknownPreflight:
+            async def check(self, telegram_user_id: int) -> object:
+                del telegram_user_id
+                raise UnknownIdentityError
+
+        await assistant_module._process_turn(
+            turn=turn,
+            runtime=cast(
+                ProcessRuntime,
+                SimpleNamespace(
+                    messages=cast(MessageCoordinator, coordinator),
+                    preflight=UnknownPreflight(),
+                    messenger=cast(OutboundMessenger, messenger),
+                ),
+            ),
+        )
+
+        assert messenger.sent == [
+            (2, "Tu ID 99 no está registrado en el sistema"),
+        ]
         assert coordinator.finished_failed
 
     asyncio.run(verify())
