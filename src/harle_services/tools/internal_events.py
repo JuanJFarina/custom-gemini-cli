@@ -79,7 +79,7 @@ class CreateEventArgs(BaseModel):
     end_date: date | None = None
     timezone: str | None = Field(default=None, min_length=1)
     event_type: EventType = EventType.USER_EVENT
-    notify_minutes_before: int = Field(default=15, ge=0)
+    notify_minutes_before: int = Field(default=0, ge=0)
     recurrence_rule: RecurrenceArgs | None = None
 
     model_config = ConfigDict(extra="forbid")
@@ -138,7 +138,7 @@ SHARED_INSTRUCTIONS = """For every internal event tool:
 - All-day events use start_date and inclusive end_date. Use the same date for a one-day event.
 - Use exactly one complete timed or all-day schedule. Updating a schedule may also change between timed and all-day.
 - Use user_event for the user's agenda and system_event for an internal reminder or task for the assistant.
-- notify_minutes_before defaults to 15 on creation. Zero also means the default 15-minute lead. On update, omission preserves the current lead and zero resets it to 15.
+- notify_minutes_before defaults to 0 on creation, meaning notification at event start. On update, omission preserves the current lead.
 - recurrence_rule is either {"week_days": [...]} for infinite weekly recurrence or {"month_days": [...]} for infinite monthly recurrence. Omit it for a one-time event.
 - On update, omit recurrence_rule to preserve it or send null to make the event one-time.
 - Recurring events remain one event definition. A missing month day produces no occurrence, and every update changes the complete definition.

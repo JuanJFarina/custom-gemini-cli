@@ -20,7 +20,7 @@ from harle_domain.events import (
     timed_event_interval,
 )
 
-DEFAULT_NOTIFICATION_LEAD = timedelta(minutes=15)
+DEFAULT_NOTIFICATION_LEAD = timedelta(0)
 DEFAULT_DUE_EVENT_LIMIT = 100
 
 
@@ -151,7 +151,7 @@ class EventService:
     ) -> InternalEvent:
         now = self._now()
         interval = event.schedule.to_interval()
-        notification_lead = _normalize_notification_lead(event.notify_before)
+        notification_lead = event.notify_before
         created = InternalEvent(
             id=uuid4(),
             user_id=user_id,
@@ -192,7 +192,7 @@ class EventService:
             else current.details.interval
         )
         notification_lead = (
-            _normalize_notification_lead(changes.notify_before)
+            changes.notify_before
             if changes.notify_before is not None
             else current.starts_at - current.notification_window_start
         )
@@ -351,8 +351,3 @@ class EventService:
 def _require_notification_lead(value: timedelta) -> None:
     if value < timedelta(0):
         raise ValueError("Event notification lead cannot be negative.")
-
-
-def _normalize_notification_lead(value: timedelta) -> timedelta:
-    _require_notification_lead(value)
-    return DEFAULT_NOTIFICATION_LEAD if value == timedelta(0) else value

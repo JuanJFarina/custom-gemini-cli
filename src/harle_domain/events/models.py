@@ -115,8 +115,10 @@ class InternalEvent:
     recurrence_rule: RecurrenceRule | None = None
 
     def __post_init__(self) -> None:
-        if self.notification_window_start >= self.starts_at:
-            raise ValueError("Event notification window must start before the event.")
+        if self.notification_window_start > self.starts_at:
+            raise ValueError(
+                "Event notification window cannot start after the event.",
+            )
 
     @property
     def title(self) -> str:

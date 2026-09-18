@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS public.internal_events (
         event_type IN ('user_event', 'system_event')
     ),
     CONSTRAINT internal_events_notification_window_valid CHECK (
-        notification_window_start < starts_at
+        notification_window_start <= starts_at
     ),
     CONSTRAINT internal_events_recurrence_rule_valid CHECK (
         recurrence_rule IS NULL
@@ -106,9 +106,9 @@ END
 WHERE status IN ('scheduled', 'cancelled');
 
 UPDATE public.internal_events
-SET notification_window_start = starts_at - INTERVAL '15 minutes'
+SET notification_window_start = starts_at
 WHERE notification_window_start IS NULL
-    OR notification_window_start >= starts_at;
+    OR notification_window_start > starts_at;
 
 DROP INDEX IF EXISTS public.idx_internal_events_due_notifications;
 DROP INDEX IF EXISTS public.idx_internal_events_active_recurrence;
@@ -126,7 +126,7 @@ ALTER TABLE public.internal_events
         event_type IN ('user_event', 'system_event')
     ),
     ADD CONSTRAINT internal_events_notification_window_valid CHECK (
-        notification_window_start < starts_at
+        notification_window_start <= starts_at
     ),
     ADD CONSTRAINT internal_events_recurrence_rule_valid CHECK (
         recurrence_rule IS NULL

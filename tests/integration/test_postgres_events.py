@@ -134,8 +134,8 @@ async def verify_event_isolation(database_url: str) -> None:
                 2026,
                 9,
                 1,
-                9,
-                50,
+                10,
+                5,
                 tzinfo=timezone.utc,
             ),
         )

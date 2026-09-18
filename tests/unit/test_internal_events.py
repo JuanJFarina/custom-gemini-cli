@@ -125,6 +125,20 @@ def test_recurrence_range_and_notification_use_virtual_occurrences() -> None:
         )
         is None
     )
+    overnight = timed_event_interval(
+        starts_at=datetime(2026, 9, 7, 23),
+        ends_at=datetime(2026, 9, 8, 1),
+        timezone_name="UTC",
+    )
+    ongoing = due_recurrence_interval(
+        interval=overnight,
+        rule=WeeklyRecurrence(frozenset({WeekDay.MONDAY})),
+        notify_before=timedelta(0),
+        last_notified_at=None,
+        current_time=datetime(2026, 9, 8, 0, 30, tzinfo=timezone.utc),
+    )
+    assert ongoing is not None
+    assert ongoing.starts_at == datetime(2026, 9, 7, 23, tzinfo=timezone.utc)
 
 
 class FakeEventRepository:
@@ -195,7 +209,7 @@ class FakeEventRepository:
                     event.last_notified_at is None
                     and event.notification_window_start
                     <= current_time
-                    < event.starts_at
+                    < event.ends_at
                 )
             )
         ]
@@ -347,8 +361,7 @@ def test_event_service_isolates_disable_enable_and_physical_deletion() -> None:
             2026,
             9,
             1,
-            17,
-            45,
+            18,
             tzinfo=timezone.utc,
         )
         delivered = await service.mark_notification_delivered(event=event)
@@ -455,7 +468,7 @@ def test_event_service_lists_and_repeats_recurring_notifications() -> None:
 
         first_due_service = EventService(
             repository,
-            clock=lambda: datetime(2026, 9, 1, 14, 50, tzinfo=timezone.utc),
+            clock=lambda: datetime(2026, 9, 1, 15, 10, tzinfo=timezone.utc),
         )
         first_due = await first_due_service.list_due_for_notification()
         assert [due.starts_at for due in first_due] == [
@@ -468,7 +481,7 @@ def test_event_service_lists_and_repeats_recurring_notifications() -> None:
 
         second_due_service = EventService(
             repository,
-            clock=lambda: datetime(2026, 9, 8, 14, 50, tzinfo=timezone.utc),
+            clock=lambda: datetime(2026, 9, 8, 15, 10, tzinfo=timezone.utc),
         )
         second_due = await second_due_service.list_due_for_notification()
         assert [due.starts_at for due in second_due] == [
@@ -488,7 +501,7 @@ def test_event_service_lists_and_repeats_recurring_notifications() -> None:
     asyncio.run(verify())
 
 
-def test_event_service_normalizes_notification_leads() -> None:
+def test_event_service_preserves_notification_leads() -> None:
     async def verify() -> None:
         repository = FakeEventRepository()
         service = EventService(repository, clock=lambda: NOW)
@@ -517,9 +530,7 @@ def test_event_service_normalizes_notification_leads() -> None:
             ),
         )
 
-        assert defaulted.starts_at - defaulted.notification_window_start == timedelta(
-            minutes=15,
-        )
+        assert defaulted.starts_at == defaulted.notification_window_start
         assert defaulted.last_notified_at is None
         preserved = await service.update(
             user_id=owner_id,
@@ -536,9 +547,7 @@ def test_event_service_normalizes_notification_leads() -> None:
             changes=UpdateEvent(notify_before=timedelta(0)),
         )
         assert reset is not None
-        assert reset.starts_at - reset.notification_window_start == timedelta(
-            minutes=15,
-        )
+        assert reset.starts_at == reset.notification_window_start
         positive = await service.update(
             user_id=owner_id,
             event_id=custom.id,
@@ -559,7 +568,7 @@ def test_event_tool_preserves_omitted_zero_and_positive_notification_leads() -> 
         "ends_at": datetime(2026, 9, 1, 16),
     }
 
-    assert CreateEventArgs(**schedule).notify_minutes_before == 15
+    assert CreateEventArgs(**schedule).notify_minutes_before == 0
     assert (
         CreateEventArgs(**schedule, notify_minutes_before=0).notify_minutes_before == 0
     )

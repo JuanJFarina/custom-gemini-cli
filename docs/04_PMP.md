@@ -95,7 +95,7 @@ Implemented baseline:
 
 - Internal events have `user_event` and `system_event` types, active and disabled states, permanent deletion, a notification window, and `last_notified_at`.
 - Events may remain one-time or repeat forever through one `week_days` or `month_days` rule without materialized occurrence rows.
-- A process-local `AgentsScheduler` runs every five minutes, derives due local occurrences, wakes the owning active user's agent without modifying tools or consuming conversation quota, and records successful delivery.
+- A process-local `AgentsScheduler` runs every five minutes, derives unnotified local occurrences from their notification-window start until their end, wakes the owning active user's agent without modifying tools or consuming conversation quota, and records successful delivery. Notification lead defaults to zero minutes.
 - Supported Telegram images, voice notes, and audio files reach Gemini as native content parts. Current media is attached automatically and the ten newest references remain available through a read-only tool for twelve hours on a best-effort basis.
 
 Remaining goals:
@@ -140,6 +140,7 @@ Exit criteria:
 ## Accepted MVP Limitations
 
 - A successful Telegram event notification followed by failure to persist `last_notified_at` may be delivered again. Durable outbox delivery is deferred.
+- A zero-minute notification may arrive up to one scheduler interval after event start because the process-local scheduler runs every five minutes.
 - The single-process scheduler may scan every active recurring definition on each five-minute pass. Distributed or indexed recurrence scheduling is deferred until measured load requires it.
 - Voice notes are the primary audio target. Audio uploaded as a generic Telegram document is unsupported.
 - The Gemini inline request uses a conservative 12 MiB combined raw-media limit to remain below its total request limit after encoding and prompt overhead.

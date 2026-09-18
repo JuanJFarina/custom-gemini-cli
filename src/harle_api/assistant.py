@@ -57,9 +57,7 @@ async def _process_turn(
         await _send_notice(
             messenger=runtime.messenger,
             chat_id=turn.telegram_chat_id,
-            text=(
-                f"Tu ID ({turn.telegram_user_id}) no está registrado en el sistema"
-            ),
+            text=(f"Tu ID {turn.telegram_user_id} no está registrado en el sistema"),
         )
         return await runtime.messages.finish_failed(
             telegram_user_id=turn.telegram_user_id,

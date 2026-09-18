@@ -177,7 +177,7 @@ class PostgresEventRepository:
                         AND recurrence_rule IS NULL
                         AND last_notified_at IS NULL
                         AND notification_window_start <= $1
-                        AND starts_at > $1
+                        AND ends_at > $1
                     ORDER BY notification_window_start, starts_at, id
                     LIMIT $2
                 )

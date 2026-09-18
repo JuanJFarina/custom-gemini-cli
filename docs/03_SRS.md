@@ -142,8 +142,8 @@ This document distinguishes the implemented controlled-beta baseline from target
 - **FR-47**: Events shall support timed and all-day schedules, preserve the originating IANA timezone, store UTC boundaries, and require the end to follow the start.
 - **FR-48**: Controlled-beta events shall create no attendees, external synchronization, quiet-period behavior, or durable background work. Later reminder or calendar integrations shall be user-scoped, revocable, and governed by the target authorization policy.
 - **FR-80**: Internal events shall have type `user_event` or `system_event`. User events represent the user's real-life agenda; system events represent internal reminders or tasks for the agent.
-- **FR-81**: Every event shall have `notification_window_start` and optional `last_notified_at`. Both event types shall use a 15-minute lead by default, zero shall select that default, and positive values shall configure a custom lead.
-- **FR-82**: A process-local `AgentsScheduler` shall run every five minutes and select active one-time events whose notification window is open and active recurring definitions that may produce a due local occurrence.
+- **FR-81**: Every event shall have `notification_window_start` and optional `last_notified_at`. Both event types shall default to a zero-minute lead, so the notification window opens at event start, while positive values shall configure a custom pre-start lead.
+- **FR-82**: A process-local `AgentsScheduler` shall run every five minutes and select unnotified active one-time events whose notification window is open and whose end has not passed, plus active recurring definitions that may produce such a local occurrence.
 - **FR-83**: The scheduler shall wake the owning user's request-scoped agent for every selected event. The agent shall treat user events as agenda context and system events as user-owned scheduled task context.
 - **FR-84**: A successful notification shall update `last_notified_at`. Failed delivery shall leave it unchanged for retry, disabling an event shall suppress all occurrences, and re-enabling shall resume them.
 - **FR-85**: Harle shall accept supported images, voice notes, and ordinary Telegram audio messages as multimodal conversation input and provide their bytes directly to the configured Gemini model. Voice notes are the primary audio target, and audio sent as a generic document may remain unsupported.
@@ -154,7 +154,7 @@ This document distinguishes the implemented controlled-beta baseline from target
 - **FR-90**: A recurring event shall preserve the ordinary timed, all-day, multi-day, timezone, type, title, description, and notification-lead behavior. Its stored start and end define the local schedule used for every matching recurrence. An omitted recurrence rule on update shall preserve it, while an explicit null rule shall convert the event to one-time.
 - **FR-91**: Event reads shall treat a recurring event as one owned event definition. A bounded date-range read shall include it when its recurrence rule produces at least one matching local occurrence in that range.
 - **FR-92**: The event lifecycle shall use active and disabled event states plus permanent deletion. Disabling an event shall stop its occurrences and notifications until it is re-enabled. The lifecycle shall not expose cancellation or notification-only enablement as separate states.
-- **FR-93**: A successful recurring notification shall update the event's `last_notified_at`. The scheduler shall send only when the current time is within a computed occurrence's notification window and `last_notified_at` precedes that window. Failed delivery shall not update the field, and an occurrence whose start has passed shall be skipped.
+- **FR-93**: A successful recurring notification shall update the event's `last_notified_at`. The scheduler shall send only from a computed occurrence's notification-window start until its end while `last_notified_at` precedes that window. Failed delivery shall not update the field, and an occurrence whose end has passed shall be skipped.
 - **FR-94**: The scheduler shall derive recurring occurrences from the recurrence rule in the event's configured local timezone on each bounded check. It shall maintain no next-occurrence cursor and no per-occurrence notification state.
 - **FR-95**: Media attached to the current Telegram message shall be downloaded and included automatically throughout its Gemini reason-and-act loop. A media attachment from an earlier message shall be loaded only when the agent calls an authorized read-only recent-media tool.
 - **FR-96**: The process-local recent-media store shall retain at most the ten newest Telegram media references per internal user for at least twelve hours on a best-effort basis. Process restart may discard these references, and raw media bytes shall not remain in the store.
@@ -204,7 +204,7 @@ This document distinguishes the implemented controlled-beta baseline from target
 - **NFR-12 Maintainability**: Assistant, API, storage, and tools shall remain modular enough to add new integrations without creating a brittle tool collection.
 - **NFR-13 Observability**: Before broad launch, production operations shall expose enough safe logs, metrics, and health checks to detect failures and cost regressions.
 - **NFR-14 Compliance discovery**: Legal, privacy, and security obligations for storing sensitive user data shall be investigated before broad paid release.
-- **NFR-15 Background reliability**: Process-local event notifications shall retry failed delivery while the event remains in the future. Future queued work and durable outbound notifications shall be observable, retryable where safe, and auditable enough to diagnose missed or duplicate actions.
+- **NFR-15 Background reliability**: Process-local event notifications shall retry failed delivery while the notification window is open and the event remains ongoing. Future queued work and durable outbound notifications shall be observable, retryable where safe, and auditable enough to diagnose missed or duplicate actions.
 
 ## Program
 
@@ -244,14 +244,14 @@ The implemented scheduled-event flow is:
 4. Harle receives each event as agenda context for a user event or scheduled task context for a system event.
 5. Harle generates a concise notification without modifying tools or a monthly quota reservation.
 6. Harle sends the notification to the user's private Telegram chat.
-7. Successful delivery updates `last_notified_at`. Failed delivery remains eligible until the occurrence starts.
+7. Successful delivery updates `last_notified_at`. Failed delivery remains eligible until the occurrence ends.
 
 The implemented recurring-event flow is:
 
 1. One internal-event row stores an optional weekly or monthly recurrence rule.
 2. A bounded event read determines whether the rule matches its requested local date range and returns the event definition once.
 3. Every scheduler check derives a relevant local occurrence and notification window without storing that occurrence.
-4. An active event is eligible only while the occurrence remains in the future and `last_notified_at` precedes its computed notification window.
+4. An active event is eligible from its computed notification-window start until the occurrence ends while `last_notified_at` precedes that window.
 5. Successful delivery updates `last_notified_at`; failure leaves it unchanged for retry.
 6. Disabling the event suppresses recurrence and notification work, re-enabling resumes it, and deletion permanently removes the row.
 

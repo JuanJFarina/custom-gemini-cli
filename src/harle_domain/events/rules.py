@@ -115,8 +115,14 @@ def due_recurrence_interval(
     if last_notified_at is not None:
         _require_aware(last_notified_at, "Last notification time")
     timezone_info = _timezone(interval.timezone)
+    anchor_start = interval.starts_at.astimezone(timezone_info)
+    anchor_end = interval.ends_at.astimezone(timezone_info)
+    day_span = (anchor_end.date() - anchor_start.date()).days
     deadline = current_time + notify_before
-    local_date = current_time.astimezone(timezone_info).date()
+    local_date = max(
+        anchor_start.date(),
+        current_time.astimezone(timezone_info).date() - timedelta(days=day_span),
+    )
     last_date = deadline.astimezone(timezone_info).date()
     while local_date <= last_date:
         occurrence = recurrence_interval(
@@ -129,7 +135,7 @@ def due_recurrence_interval(
             not_already_notified = (
                 last_notified_at is None or last_notified_at < window_start
             )
-            if window_start <= current_time < occurrence.starts_at:
+            if window_start <= current_time < occurrence.ends_at:
                 if not_already_notified:
                     return occurrence
         local_date += timedelta(days=1)
