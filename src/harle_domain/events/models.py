@@ -115,8 +115,8 @@ class EventNotificationOccurrence:
     def __post_init__(self) -> None:
         _require_utc(self.starts_at, "Notification occurrence start")
         _require_utc(self.window_start, "Notification occurrence window start")
-        if self.window_start >= self.starts_at:
-            raise ValueError("Notification window must start before its occurrence.")
+        if self.window_start > self.starts_at:
+            raise ValueError("Notification window cannot start after its occurrence.")
 
 
 @dataclass(frozen=True, slots=True)

@@ -241,10 +241,7 @@ class _EventToolHandlers:
     async def list_events(self, args: BaseModel) -> ToolCallResult:
         self.context.require_family(FAMILY)
         validated = _require_model(args, ListEventsArgs)
-        notification_quota = await _notification_quota_payload(
-            self.notification_quotas,
-            self.context,
-        )
+        notification_quota = await self._notification_quota()
         events = await self.service.list_for_range(
             user_id=self.context.user_id,
             query=EventQuery(
@@ -268,10 +265,7 @@ class _EventToolHandlers:
     async def create_event(self, args: BaseModel) -> ToolCallResult:
         self.context.require_family(FAMILY)
         validated = _require_model(args, CreateEventArgs)
-        notification_quota = await _notification_quota_payload(
-            self.notification_quotas,
-            self.context,
-        )
+        notification_quota = await self._notification_quota()
         event = await self.service.create(
             user_id=self.context.user_id,
             event=CreateEvent(
@@ -287,15 +281,13 @@ class _EventToolHandlers:
         )
         return ToolCallResult(
             called_tool_name="create_event",
-            result={
-                **_mutation_payload(event, "created"),
-                "notification_quota": notification_quota,
-            },
+            result=_mutation_payload(event, "created", notification_quota),
         )
 
     async def update_event(self, args: BaseModel) -> ToolCallResult:
         self.context.require_family(FAMILY)
         validated = _require_model(args, UpdateEventArgs)
+        notification_quota = await self._notification_quota()
         event = await self.service.update(
             user_id=self.context.user_id,
             event_id=validated.event_id,
@@ -315,43 +307,52 @@ class _EventToolHandlers:
         )
         return ToolCallResult(
             called_tool_name="update_event",
-            result=_mutation_payload(event, "updated"),
+            result=_mutation_payload(event, "updated", notification_quota),
         )
 
     async def disable_event(self, args: BaseModel) -> ToolCallResult:
         self.context.require_family(FAMILY)
         validated = _require_model(args, EventIdentifierArgs)
+        notification_quota = await self._notification_quota()
         event = await self.service.disable(
             user_id=self.context.user_id,
             event_id=validated.event_id,
         )
         return ToolCallResult(
             called_tool_name="disable_event",
-            result=_mutation_payload(event, "disabled"),
+            result=_mutation_payload(event, "disabled", notification_quota),
         )
 
     async def enable_event(self, args: BaseModel) -> ToolCallResult:
         self.context.require_family(FAMILY)
         validated = _require_model(args, EventIdentifierArgs)
+        notification_quota = await self._notification_quota()
         event = await self.service.enable(
             user_id=self.context.user_id,
             event_id=validated.event_id,
         )
         return ToolCallResult(
             called_tool_name="enable_event",
-            result=_mutation_payload(event, "enabled"),
+            result=_mutation_payload(event, "enabled", notification_quota),
         )
 
     async def delete_event(self, args: BaseModel) -> ToolCallResult:
         self.context.require_family(FAMILY)
         validated = _require_model(args, EventIdentifierArgs)
+        notification_quota = await self._notification_quota()
         event = await self.service.delete(
             user_id=self.context.user_id,
             event_id=validated.event_id,
         )
         return ToolCallResult(
             called_tool_name="delete_event",
-            result=_mutation_payload(event, "deleted"),
+            result=_mutation_payload(event, "deleted", notification_quota),
+        )
+
+    async def _notification_quota(self) -> Mapping[str, object]:
+        return await _notification_quota_payload(
+            self.notification_quotas,
+            self.context,
         )
 
 
@@ -450,12 +451,14 @@ def _recurrence_payload(
 def _mutation_payload(
     event: InternalEvent | None,
     operation: str,
+    notification_quota: Mapping[str, object],
 ) -> Mapping[str, object]:
     return {
         "ok": event is not None,
         "operation": operation,
         "reason": None if event is not None else "Event was not found.",
         "event": _event_payload(event) if event is not None else None,
+        "notification_quota": notification_quota,
     }
 
 

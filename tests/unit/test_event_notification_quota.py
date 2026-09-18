@@ -153,7 +153,11 @@ class FakeMessenger:
 
 
 def _event(
-    user_id: UUID, *, starts_at: datetime, event_id: UUID | None = None
+    user_id: UUID,
+    *,
+    starts_at: datetime,
+    event_id: UUID | None = None,
+    notify_before: timedelta = timedelta(minutes=15),
 ) -> InternalEvent:
     return InternalEvent(
         id=event_id or uuid4(),
@@ -171,7 +175,7 @@ def _event(
             status=EventStatus.ACTIVE,
         ),
         notification=EventNotification(
-            window_start=starts_at - timedelta(minutes=15),
+            window_start=starts_at - notify_before,
         ),
         timestamps=EventTimestamps(created_at=NOW, updated_at=NOW),
     )
@@ -235,7 +239,11 @@ def test_notification_quota_reserves_counts_and_blocks() -> None:
             clock=lambda: NOW,
         )
         first = await service.reserve(
-            event=_event(user_id, starts_at=NOW + timedelta(hours=1)),
+            event=_event(
+                user_id,
+                starts_at=NOW + timedelta(hours=1),
+                notify_before=timedelta(0),
+            ),
             monthly_limit=1,
         )
         assert isinstance(first, NotificationQuotaReservation)

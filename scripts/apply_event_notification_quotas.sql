@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS public.event_notification_deliveries (
     notification_window_start TIMESTAMPTZ NOT NULL,
     delivered_at TIMESTAMPTZ NOT NULL,
     CONSTRAINT event_notification_delivery_window_valid CHECK (
-        notification_window_start < occurrence_starts_at
+        notification_window_start <= occurrence_starts_at
     ),
     CONSTRAINT event_notification_delivery_occurrence_key UNIQUE (
         event_id,

@@ -26,7 +26,7 @@ from harle_services.events import (
     NotificationQuotaStatus,
 )
 from harle_services.tools import ToolInjectionContext
-from harle_services.tools.internal_events import ListEventsArgs
+from harle_services.tools.internal_events import EventIdentifierArgs, ListEventsArgs
 from harle_utils import ToolAccessDeniedError, ToolUnavailableError
 
 NOW = datetime(2026, 8, 31, tzinfo=timezone.utc)
@@ -35,6 +35,9 @@ NOW = datetime(2026, 8, 31, tzinfo=timezone.utc)
 class EmptyEventRepository:
     async def list_for_range(self, **_: object) -> list[InternalEvent]:
         return []
+
+    async def disable(self, **_: object) -> InternalEvent | None:
+        return None
 
 
 class FakeNotificationQuotas:
@@ -213,13 +216,19 @@ def test_event_tools_expose_plan_notification_allowance() -> None:
             ),
         ),
     )
+    mutation_result = asyncio.run(
+        store.get("disable_event").handler(
+            EventIdentifierArgs(event_id=uuid4()),
+        ),
+    )
 
-    assert isinstance(result.result, Mapping)
-    assert result.result["notification_quota"] == {
-        "monthly_limit": 60,
-        "remaining": 59,
-        "resets_at": "2026-09-01T00:00:00Z",
-    }
+    for tool_result in (result, mutation_result):
+        assert isinstance(tool_result.result, Mapping)
+        assert tool_result.result["notification_quota"] == {
+            "monthly_limit": 60,
+            "remaining": 59,
+            "resets_at": "2026-09-01T00:00:00Z",
+        }
 
 
 def test_google_sheets_client_rechecks_uuid_before_write() -> None:
