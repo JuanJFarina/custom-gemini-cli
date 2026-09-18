@@ -86,6 +86,9 @@ class ToolsInjector:
             user_id=context.resolved_user.user.id,
             timezone=context.timezone,
             authorized_families=families,
+            monthly_notification_limit=(
+                context.resolved_user.plan.monthly_notification_limit
+            ),
         )
         if not context.recent_media:
             return store
@@ -103,6 +106,7 @@ class ToolsInjector:
             user_id=user_id,
             timezone="UTC",
             authorized_families=families,
+            monthly_notification_limit=0,
         )
 
 

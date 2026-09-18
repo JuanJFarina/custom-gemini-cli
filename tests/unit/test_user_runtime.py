@@ -22,6 +22,8 @@ from harle_services.runtime import UserRuntimeFactory
 from harle_utils import MissingProfileError
 
 NOW = datetime(2026, 8, 31, tzinfo=timezone.utc)
+
+
 class FakeUserProfiles:
     def __init__(self, profiles: Mapping[UUID, UserProfile]) -> None:
         self.profiles = profiles
@@ -90,6 +92,7 @@ def resolved_user(telegram_id: int, name: str) -> ResolvedUser:
     plan = Plan(
         code="basic",
         monthly_request_limit=480,
+        monthly_notification_limit=60,
         active=True,
         created_at=NOW,
         updated_at=NOW,

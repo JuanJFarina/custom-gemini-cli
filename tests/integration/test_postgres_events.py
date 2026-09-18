@@ -8,11 +8,13 @@ import asyncpg
 import pytest
 
 from harle_domain.events import (
+    EventNotificationOccurrence,
     EventStatus,
     WeekDay,
     WeeklyRecurrence,
 )
 from harle_infrastructure.postgres import (
+    PostgresEventNotificationUsageRepository,
     PostgresEventRepository,
     create_postgres_pool,
 )
@@ -29,6 +31,7 @@ ROOT = Path(__file__).parents[2]
 SCHEMA_PATHS = (
     ROOT / "scripts" / "apply_multi_user_runtime.sql",
     ROOT / "scripts" / "apply_internal_events.sql",
+    ROOT / "scripts" / "apply_event_notification_quotas.sql",
 )
 NOW = datetime(2026, 8, 31, 12, tzinfo=timezone.utc)
 
@@ -141,6 +144,29 @@ async def verify_event_isolation(database_url: str) -> None:
         )
         due_events = await due_service.list_due_for_notification()
         assert {event.id for event in due_events} == {first.id, recurring.id}
+        usage = PostgresEventNotificationUsageRepository(pool)
+        occurrence = EventNotificationOccurrence(
+            event_id=first.id,
+            user_id=first_id,
+            starts_at=first.starts_at,
+            window_start=first.notification_window_start,
+        )
+        assert await usage.record_delivery(
+            occurrence=occurrence,
+            delivered_at=NOW,
+        )
+        assert not await usage.record_delivery(
+            occurrence=occurrence,
+            delivered_at=NOW,
+        )
+        assert (
+            await usage.count_deliveries(
+                user_id=first_id,
+                delivered_from=datetime(2026, 8, 1, tzinfo=timezone.utc),
+                delivered_before=datetime(2026, 9, 1, tzinfo=timezone.utc),
+            )
+            == 1
+        )
         delivered = await due_service.mark_notification_delivered(event=first)
         assert delivered is not None
         assert delivered.last_notified_at == due_service.clock()
@@ -202,6 +228,14 @@ async def verify_event_isolation(database_url: str) -> None:
         deleted = await service.delete(user_id=first_id, event_id=first.id)
         assert deleted is not None
         assert deleted.status is EventStatus.DISABLED
+        assert (
+            await usage.count_deliveries(
+                user_id=first_id,
+                delivered_from=datetime(2026, 8, 1, tzinfo=timezone.utc),
+                delivered_before=datetime(2026, 9, 1, tzinfo=timezone.utc),
+            )
+            == 1
+        )
         assert not await service.list_for_range(
             user_id=first_id,
             query=EventQuery(

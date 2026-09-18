@@ -192,10 +192,49 @@ erDiagram
 
 Recent Telegram media remains outside the PostgreSQL ERD while its twelve-hour retention is best-effort. The process-local store contains only user-scoped Telegram references and compact metadata, never raw image or audio bytes.
 
+## Confirmed Pending Notification-Quota Delta
+
+This target delta is required but is not part of the current PostgreSQL model.
+
+```mermaid
+erDiagram
+    HARLE_USER ||--o{ EVENT_NOTIFICATION_DELIVERY : owns
+    INTERNAL_EVENT o|--o{ EVENT_NOTIFICATION_DELIVERY : produces
+    HARLE_USER ||--o{ EVENT_NOTIFICATION_QUOTA_NOTICE : receives
+
+    PLAN {
+        INTEGER monthly_notification_limit
+    }
+
+    EVENT_NOTIFICATION_DELIVERY {
+        UUID id PK
+        UUID user_id FK
+        UUID event_id FK
+        TIMESTAMPTZ occurrence_starts_at
+        TIMESTAMPTZ notification_window_start
+        TIMESTAMPTZ delivered_at
+    }
+
+    EVENT_NOTIFICATION_QUOTA_NOTICE {
+        UUID user_id PK, FK
+        TIMESTAMPTZ period_starts_at PK
+        TEXT status
+        TIMESTAMPTZ attempted_at
+        TIMESTAMPTZ delivered_at
+    }
+```
+
+- `PLAN.monthly_notification_limit` is separate from `monthly_request_limit`; the provisional free, basic, and max values are 15, 60, and 240.
+- A delivery row represents one successfully delivered `user_event` or `system_event` occurrence. Monthly usage counts `delivered_at` inside inclusive-start and exclusive-end UTC boundaries.
+- The event identifier, occurrence start, and notification window are unique together so a successful occurrence cannot consume allowance twice.
+- Deleting an event sets the ledger's event reference to null instead of deleting its usage. Deleting the owning account removes its delivery and notice records under the account-deletion policy.
+- The notice marker permits at most one static, non-Gemini quota-exhausted notice attempt per user and UTC month. It consumes neither conversation nor event-notification allowance.
+- Process-local in-flight reservations remain outside PostgreSQL while deployment is limited to one process. Durable distributed reservations belong with later queue and worker design.
+
 ## Out Of Scope For This ERD
 
 - Proposed actions and action audits
 - Durable Telegram inbox and outbox queues
-- Notification preferences and durable scheduler or delivery records
+- Notification preferences and durable scheduler or delivery records beyond the confirmed quota ledger and notice marker
 - OAuth credentials and multi-user Google integrations
 - External registration, payment, and web-interface data

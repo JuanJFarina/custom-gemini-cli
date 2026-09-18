@@ -22,6 +22,8 @@ This plan covers:
 - Process-scoped repositories and clients must not retain a current user.
 - Commercial users receive PostgreSQL expenses and events.
 - Juan receives PostgreSQL events and private legacy Google Sheets expenses based only on his configured internal UUID.
+- Plans will carry separate monthly conversation and event-notification limits. The provisional free, basic, and max notification limits are 15, 60, and 240 successful deliveries per UTC month.
+- Event-notification allowance will be reserved before Gemini and consumed only after successful Telegram delivery for either event type.
 - Current controlled-beta schema changes use ordered idempotent SQL scripts. Versioned migrations remain required before broad launch.
 - The current data model is defined in the [ERD](05_ERD.md).
 
@@ -29,7 +31,9 @@ This plan covers:
 
 - No user may read or modify another user's conversations, profiles, expenses, events, or tool integrations.
 - Unknown, inactive, banned, duplicate, or over-quota requests must stop before Gemini and tools.
+- An event occurrence without notification allowance must stop before Gemini, must not consume conversation quota, and must not be marked as delivered.
 - A duplicate Telegram update must not duplicate a conversation, tool record, or side effect.
+- Failed event generation or delivery must not consume notification allowance, and a successfully delivered occurrence must count at most once.
 - Logs and metrics must exclude conversation bodies, profile text, financial descriptions, event descriptions, credentials, spreadsheet identifiers, and tool payloads.
 - Accepted work that the product promises to complete must survive process restarts.
 - Production schema changes, backups, restoration, and account deletion must be repeatable and verifiable.
@@ -45,6 +49,7 @@ Goals:
 - Move assistant orchestration and failure policy out of `harle_api` so the API depends only on services and utilities.
 - Run the PostgreSQL expense, event, isolation, and restart-deduplication tests in the release environment.
 - Add focused tests for non-Juan denial before Google Sheets client construction and for ban escalation, notice suppression, and strike decay.
+- Add plan-level event-notification quotas, successful-delivery accounting, in-flight reservations, and the one-per-month static exhaustion notice.
 
 Exit criteria:
 
@@ -53,6 +58,8 @@ Exit criteria:
 - All release-critical PostgreSQL integration tests pass against the deployed schema.
 - Google Sheets construction and execution both fail safely for every non-Juan UUID.
 - All three cooldown levels and strike decay are deterministic under an injected clock.
+- Free, basic, and max users are limited to 15, 60, and 240 successful event notifications per UTC month without consuming conversation quota.
+- Quota admission happens before Gemini, failed attempts consume nothing, delivered occurrences count once, and the user receives at most one non-Gemini exhaustion notice per month.
 
 ### 2. Broad-Launch Transaction and Delivery Safety
 
@@ -133,6 +140,7 @@ Exit criteria:
 - **Process-count drift**: Enforce one-process deployment until coordination state becomes distributed.
 - **Sensitive logging**: Use structured allowlisted fields and test that protected content is absent.
 - **Recurring notification duplication**: Compare `last_notified_at` with the computed occurrence window and update it only after successful Telegram delivery.
+- **Notification quota drift**: Use a successful-delivery ledger plus process-local in-flight reservations, retain consumed usage when an event is deleted, and reconcile quota persistence with durable outbox work before multiple workers are allowed.
 - **Sensitive media references**: Keep Telegram file identifiers out of logs and model context, retain no raw bytes after active use, and scope every recent-media lookup by internal user UUID.
 - **Ephemeral media loss**: Treat the twelve-hour process-local media window as best-effort and allow restart to discard it.
 - **Unresolved policy implemented as code**: Block the affected phase until the product decision is recorded in Features or the SRS.
@@ -140,6 +148,7 @@ Exit criteria:
 ## Accepted MVP Limitations
 
 - A successful Telegram event notification followed by failure to persist `last_notified_at` may be delivered again. Durable outbox delivery is deferred.
+- A successful Telegram delivery followed by failure to persist its notification-usage record may temporarily undercount quota or be retried. Durable transactional outbox delivery is deferred.
 - A zero-minute notification may arrive up to one scheduler interval after event start because the process-local scheduler runs every five minutes.
 - The single-process scheduler may scan every active recurring definition on each five-minute pass. Distributed or indexed recurrence scheduling is deferred until measured load requires it.
 - Voice notes are the primary audio target. Audio uploaded as a generic Telegram document is unsupported.
@@ -148,7 +157,7 @@ Exit criteria:
 
 ## Open Product Decisions
 
-- Final plan names, quotas, upgrades, downgrades, carry-over, and failed-payment grace behavior
+- Final plan names, conversation and event-notification limits, upgrades, downgrades, carry-over, and failed-payment grace behavior
 - Proposed-action lifetime and Telegram confirmation experience
 - Conversation, inbox, outbox, expense, event, audit, and backup retention
 - Export format, deletion SLA, credential revocation, and supported operating region

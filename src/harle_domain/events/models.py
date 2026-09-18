@@ -106,6 +106,20 @@ class EventNotification:
 
 
 @dataclass(frozen=True, slots=True)
+class EventNotificationOccurrence:
+    event_id: UUID
+    user_id: UUID
+    starts_at: datetime
+    window_start: datetime
+
+    def __post_init__(self) -> None:
+        _require_utc(self.starts_at, "Notification occurrence start")
+        _require_utc(self.window_start, "Notification occurrence window start")
+        if self.window_start >= self.starts_at:
+            raise ValueError("Notification window must start before its occurrence.")
+
+
+@dataclass(frozen=True, slots=True)
 class InternalEvent:
     id: UUID
     user_id: UUID

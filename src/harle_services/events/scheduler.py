@@ -6,7 +6,7 @@ from asyncpg import PostgresError
 
 from harle_utils import MessageDeliveryError, log
 
-from .notifications import EventNotificationService
+from .notifications import EventNotificationOutcome, EventNotificationService
 from .service import EventService
 
 SCHEDULER_FAILURES = (
@@ -62,13 +62,20 @@ class AgentsScheduler:
             delivered_count = 0
             for event in due_events:
                 try:
-                    delivered = await self.notifications.notify(event)
-                    if not delivered:
+                    outcome = await self.notifications.notify(event)
+                    if outcome not in {
+                        EventNotificationOutcome.DELIVERED,
+                        EventNotificationOutcome.ALREADY_DELIVERED,
+                    }:
                         continue
                     delivered_event = await self.events.mark_notification_delivered(
                         event=event,
                     )
-                    delivered_count += delivered_event is not None
+                    if (
+                        outcome is EventNotificationOutcome.DELIVERED
+                        and delivered_event is not None
+                    ):
+                        delivered_count += 1
                 except SCHEDULER_FAILURES as exc:
                     log.warning(
                         "Event notification failed for %s: %s",

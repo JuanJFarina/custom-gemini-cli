@@ -22,12 +22,13 @@ class TimestampedRecord:
 class Plan(TimestampedRecord):
     code: str
     monthly_request_limit: int
+    monthly_notification_limit: int
     active: bool
 
     def __post_init__(self) -> None:
         _require_non_empty(self.code, field_name="plan code")
-        if self.monthly_request_limit <= 0:
-            raise ValueError("Monthly request limit must be positive.")
+        if min(self.monthly_request_limit, self.monthly_notification_limit) <= 0:
+            raise ValueError("Monthly plan limits must be positive.")
 
 
 @dataclass(frozen=True, slots=True)

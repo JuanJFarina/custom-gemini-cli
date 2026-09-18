@@ -75,6 +75,7 @@ def resolved_user(*, active: bool = True) -> ResolvedUser:
     plan = Plan(
         code="basic",
         monthly_request_limit=60,
+        monthly_notification_limit=60,
         active=active,
         created_at=NOW,
         updated_at=NOW,

@@ -50,6 +50,10 @@
 - **User-authorized modifications**: Harle may modify expenses, reminders, calendar events, profiles, memories, or other user data when the user directly asks for that modification. If Harle infers, suggests, or initiates a modification itself, it must ask the user first.
 - **Confirmation and audit**: Inferred modifications should become expiring proposed actions that the same user can confirm or cancel, and every executed modification should be auditable.
 - **Automated subscription synchronization**: Harle should receive current plan and subscription state safely from the external registration and payment product.
+- **Separate event-notification quotas**: Each plan should have a monthly event-notification allowance separate from conversation quota. The provisional free, basic, and max limits are 15, 60, and 240 successful notifications per UTC month.
+- **Notification quota accounting**: Successful Telegram deliveries for both `user_event` and `system_event` occurrences should count once. Reservations should happen before Gemini, while failed deliveries, retries, and quota notices should consume no allowance.
+- **Notification quota visibility**: Relevant event flows should expose the plan limit, remaining allowance, and exact UTC reset boundary. The first blocked occurrence in a UTC month should receive one static, non-Gemini quota-exhausted notice instead of failing silently.
+- **Notification delivery ledger**: Successful event notifications should have user-owned delivery records so monthly usage and occurrence idempotency do not depend on the event's latest `last_notified_at` value or disappear when an event is deleted.
 - **Privacy controls**: Users should be able to export and delete their data according to defined retention, backup, and deletion policies.
 - **Durable accepted work**: Work accepted from Telegram should survive process restarts without duplicate side effects or duplicate responses where the provider permits it.
 - **Operational readiness**: Broad release requires automated quality gates, readiness checks, safe metrics and logs, backups, and exercised restoration.
@@ -85,5 +89,5 @@
 - **Confirmation flow**: Define the exact user experience for approving environment modifications from Telegram.
 - **Memory policy**: Define what Harle stores automatically, what requires explicit consent, and how users can review or delete memory.
 - **Data lifecycle**: Define retention periods, deletion SLA, export format, backup retention, supported operating region, and credential revocation.
-- **Quota policy**: Confirm plan names, final limits, upgrades, downgrades, failed-payment behavior, and whether unused requests carry over.
+- **Quota policy**: Confirm plan names, final request and event-notification limits, upgrades, downgrades, failed-payment behavior, and whether unused allowance carries over.
 - **Google source of truth**: Decide whether internal expenses and events remain authoritative after multi-user Google integrations are introduced.
