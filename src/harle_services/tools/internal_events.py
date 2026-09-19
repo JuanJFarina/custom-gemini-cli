@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Annotated, Literal, TypeVar
 from uuid import UUID
@@ -25,6 +26,7 @@ from harle_domain.tools import (
 from harle_services.events import (
     AllDayEventSchedule,
     CreateEvent,
+    EventNotificationQuotaService,
     EventQuery,
     EventSchedule,
     EventService,
@@ -143,6 +145,7 @@ SHARED_INSTRUCTIONS = """For every internal event tool:
 - On update, omit recurrence_rule to preserve it or send null to make the event one-time.
 - Recurring events remain one event definition. A missing month day produces no occurrence, and every update changes the complete definition.
 - Normal reads hide disabled events; include them only when explicitly requested. Disabling is reversible and deletion is permanent.
+- Event results include the user's separate monthly notification limit, remaining allowance, and UTC reset boundary.
 - Events never create external calendar work."""
 
 DEFINITIONS = (
@@ -205,124 +208,152 @@ DEFINITIONS = (
 
 def create_internal_events_registration(
     service: EventService,
+    notification_quotas: EventNotificationQuotaService,
 ) -> ToolFamilyRegistration:
     def build_handlers(
         context: ToolExecutionContext,
     ) -> Mapping[str, ToolHandler]:
-        async def list_events(args: BaseModel) -> ToolCallResult:
-            context.require_family(FAMILY)
-            validated = _require_model(args, ListEventsArgs)
-            events = await service.list_for_range(
-                user_id=context.user_id,
-                query=EventQuery(
-                    start_date=validated.start_date,
-                    end_date=validated.end_date,
-                    timezone_name=context.timezone,
-                    include_disabled=validated.include_disabled,
-                ),
-            )
-            return ToolCallResult(
-                called_tool_name="list_events",
-                result={
-                    "ok": True,
-                    "start_date": validated.start_date.isoformat(),
-                    "end_date": validated.end_date.isoformat(),
-                    "events": [_event_payload(event) for event in events],
-                },
-            )
-
-        async def create_event(args: BaseModel) -> ToolCallResult:
-            context.require_family(FAMILY)
-            validated = _require_model(args, CreateEventArgs)
-            event = await service.create(
-                user_id=context.user_id,
-                event=CreateEvent(
-                    title=validated.title,
-                    description=validated.description,
-                    schedule=_schedule(validated, context.timezone),
-                    event_type=validated.event_type,
-                    notify_before=timedelta(
-                        minutes=validated.notify_minutes_before,
-                    ),
-                    recurrence_rule=_recurrence_rule(validated.recurrence_rule),
-                ),
-            )
-            return ToolCallResult(
-                called_tool_name="create_event",
-                result=_mutation_payload(event, "created"),
-            )
-
-        async def update_event(args: BaseModel) -> ToolCallResult:
-            context.require_family(FAMILY)
-            validated = _require_model(args, UpdateEventArgs)
-            event = await service.update(
-                user_id=context.user_id,
-                event_id=validated.event_id,
-                changes=UpdateEvent(
-                    title=validated.title,
-                    description=validated.description,
-                    schedule=_optional_schedule(validated, context.timezone),
-                    event_type=validated.event_type,
-                    notify_before=(
-                        timedelta(minutes=validated.notify_minutes_before)
-                        if validated.notify_minutes_before is not None
-                        else None
-                    ),
-                    recurrence_rule=_recurrence_rule(validated.recurrence_rule),
-                    replace_recurrence=validated.replaces_recurrence,
-                ),
-            )
-            return ToolCallResult(
-                called_tool_name="update_event",
-                result=_mutation_payload(event, "updated"),
-            )
-
-        async def disable_event(args: BaseModel) -> ToolCallResult:
-            context.require_family(FAMILY)
-            validated = _require_model(args, EventIdentifierArgs)
-            event = await service.disable(
-                user_id=context.user_id,
-                event_id=validated.event_id,
-            )
-            return ToolCallResult(
-                called_tool_name="disable_event",
-                result=_mutation_payload(event, "disabled"),
-            )
-
-        async def enable_event(args: BaseModel) -> ToolCallResult:
-            context.require_family(FAMILY)
-            validated = _require_model(args, EventIdentifierArgs)
-            event = await service.enable(
-                user_id=context.user_id,
-                event_id=validated.event_id,
-            )
-            return ToolCallResult(
-                called_tool_name="enable_event",
-                result=_mutation_payload(event, "enabled"),
-            )
-
-        async def delete_event(args: BaseModel) -> ToolCallResult:
-            context.require_family(FAMILY)
-            validated = _require_model(args, EventIdentifierArgs)
-            event = await service.delete(
-                user_id=context.user_id,
-                event_id=validated.event_id,
-            )
-            return ToolCallResult(
-                called_tool_name="delete_event",
-                result=_mutation_payload(event, "deleted"),
-            )
-
-        return {
-            "list_events": list_events,
-            "create_event": create_event,
-            "update_event": update_event,
-            "disable_event": disable_event,
-            "enable_event": enable_event,
-            "delete_event": delete_event,
-        }
+        return _EventToolHandlers(
+            service,
+            notification_quotas,
+            context,
+        ).mapping()
 
     return _event_registration(build_handlers)
+
+
+@dataclass(frozen=True, slots=True)
+class _EventToolHandlers:
+    service: EventService
+    notification_quotas: EventNotificationQuotaService
+    context: ToolExecutionContext
+
+    def mapping(self) -> Mapping[str, ToolHandler]:
+        return {
+            "list_events": self.list_events,
+            "create_event": self.create_event,
+            "update_event": self.update_event,
+            "disable_event": self.disable_event,
+            "enable_event": self.enable_event,
+            "delete_event": self.delete_event,
+        }
+
+    async def list_events(self, args: BaseModel) -> ToolCallResult:
+        self.context.require_family(FAMILY)
+        validated = _require_model(args, ListEventsArgs)
+        notification_quota = await self._notification_quota()
+        events = await self.service.list_for_range(
+            user_id=self.context.user_id,
+            query=EventQuery(
+                start_date=validated.start_date,
+                end_date=validated.end_date,
+                timezone_name=self.context.timezone,
+                include_disabled=validated.include_disabled,
+            ),
+        )
+        return ToolCallResult(
+            called_tool_name="list_events",
+            result={
+                "ok": True,
+                "start_date": validated.start_date.isoformat(),
+                "end_date": validated.end_date.isoformat(),
+                "events": [_event_payload(event) for event in events],
+                "notification_quota": notification_quota,
+            },
+        )
+
+    async def create_event(self, args: BaseModel) -> ToolCallResult:
+        self.context.require_family(FAMILY)
+        validated = _require_model(args, CreateEventArgs)
+        notification_quota = await self._notification_quota()
+        event = await self.service.create(
+            user_id=self.context.user_id,
+            event=CreateEvent(
+                title=validated.title,
+                description=validated.description,
+                schedule=_schedule(validated, self.context.timezone),
+                event_type=validated.event_type,
+                notify_before=timedelta(
+                    minutes=validated.notify_minutes_before,
+                ),
+                recurrence_rule=_recurrence_rule(validated.recurrence_rule),
+            ),
+        )
+        return ToolCallResult(
+            called_tool_name="create_event",
+            result=_mutation_payload(event, "created", notification_quota),
+        )
+
+    async def update_event(self, args: BaseModel) -> ToolCallResult:
+        self.context.require_family(FAMILY)
+        validated = _require_model(args, UpdateEventArgs)
+        notification_quota = await self._notification_quota()
+        event = await self.service.update(
+            user_id=self.context.user_id,
+            event_id=validated.event_id,
+            changes=UpdateEvent(
+                title=validated.title,
+                description=validated.description,
+                schedule=_optional_schedule(validated, self.context.timezone),
+                event_type=validated.event_type,
+                notify_before=(
+                    timedelta(minutes=validated.notify_minutes_before)
+                    if validated.notify_minutes_before is not None
+                    else None
+                ),
+                recurrence_rule=_recurrence_rule(validated.recurrence_rule),
+                replace_recurrence=validated.replaces_recurrence,
+            ),
+        )
+        return ToolCallResult(
+            called_tool_name="update_event",
+            result=_mutation_payload(event, "updated", notification_quota),
+        )
+
+    async def disable_event(self, args: BaseModel) -> ToolCallResult:
+        self.context.require_family(FAMILY)
+        validated = _require_model(args, EventIdentifierArgs)
+        notification_quota = await self._notification_quota()
+        event = await self.service.disable(
+            user_id=self.context.user_id,
+            event_id=validated.event_id,
+        )
+        return ToolCallResult(
+            called_tool_name="disable_event",
+            result=_mutation_payload(event, "disabled", notification_quota),
+        )
+
+    async def enable_event(self, args: BaseModel) -> ToolCallResult:
+        self.context.require_family(FAMILY)
+        validated = _require_model(args, EventIdentifierArgs)
+        notification_quota = await self._notification_quota()
+        event = await self.service.enable(
+            user_id=self.context.user_id,
+            event_id=validated.event_id,
+        )
+        return ToolCallResult(
+            called_tool_name="enable_event",
+            result=_mutation_payload(event, "enabled", notification_quota),
+        )
+
+    async def delete_event(self, args: BaseModel) -> ToolCallResult:
+        self.context.require_family(FAMILY)
+        validated = _require_model(args, EventIdentifierArgs)
+        notification_quota = await self._notification_quota()
+        event = await self.service.delete(
+            user_id=self.context.user_id,
+            event_id=validated.event_id,
+        )
+        return ToolCallResult(
+            called_tool_name="delete_event",
+            result=_mutation_payload(event, "deleted", notification_quota),
+        )
+
+    async def _notification_quota(self) -> Mapping[str, object]:
+        return await _notification_quota_payload(
+            self.notification_quotas,
+            self.context,
+        )
 
 
 def _event_registration(
@@ -420,12 +451,29 @@ def _recurrence_payload(
 def _mutation_payload(
     event: InternalEvent | None,
     operation: str,
+    notification_quota: Mapping[str, object],
 ) -> Mapping[str, object]:
     return {
         "ok": event is not None,
         "operation": operation,
         "reason": None if event is not None else "Event was not found.",
         "event": _event_payload(event) if event is not None else None,
+        "notification_quota": notification_quota,
+    }
+
+
+async def _notification_quota_payload(
+    service: EventNotificationQuotaService,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    status = await service.status(
+        user_id=context.user_id,
+        monthly_limit=context.monthly_notification_limit,
+    )
+    return {
+        "monthly_limit": status.limit,
+        "remaining": status.remaining,
+        "resets_at": status.resets_at.isoformat().replace("+00:00", "Z"),
     }
 
 

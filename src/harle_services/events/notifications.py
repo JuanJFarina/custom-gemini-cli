@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import timedelta
+from enum import Enum
 from zoneinfo import ZoneInfo
 
 from harle_domain.events import EventType, InternalEvent
@@ -14,14 +15,29 @@ from harle_utils import (
     UnknownIdentityError,
 )
 
+from .quota import (
+    EventNotificationQuotaService,
+    NotificationQuotaExceeded,
+    NotificationQuotaReservation,
+    NotificationQuotaSkip,
+)
+
+
+class EventNotificationOutcome(str, Enum):
+    DELIVERED = "delivered"
+    ALREADY_DELIVERED = "already_delivered"
+    QUOTA_EXCEEDED = "quota_exceeded"
+    SKIPPED = "skipped"
+
 
 @dataclass(frozen=True, slots=True)
 class EventNotificationService:
     preflight: PreflightService
     users: UserRuntimeFactory
     messenger: OutboundMessenger
+    quotas: EventNotificationQuotaService
 
-    async def notify(self, event: InternalEvent) -> bool:
+    async def notify(self, event: InternalEvent) -> EventNotificationOutcome:
         try:
             resolved_user = await self.preflight.resolve_active_user(event.user_id)
             chat_id = _telegram_chat_id(resolved_user.identity.external_user_id)
@@ -35,18 +51,55 @@ class EventNotificationService:
             UnknownIdentityError,
             ValueError,
         ):
-            return False
+            return EventNotificationOutcome.SKIPPED
 
-        generated = await generate_response(
-            prompt=_notification_prompt(event),
-            user_runtime=user_runtime,
-            tool_store=HarleToolStore(),
+        admission = await self.quotas.reserve(
+            event=event,
+            monthly_limit=resolved_user.plan.monthly_notification_limit,
         )
+        if admission is NotificationQuotaSkip.ALREADY_DELIVERED:
+            return EventNotificationOutcome.ALREADY_DELIVERED
+        if admission is NotificationQuotaSkip.ALREADY_IN_FLIGHT:
+            return EventNotificationOutcome.SKIPPED
+        if isinstance(admission, NotificationQuotaExceeded):
+            await self._send_quota_exhausted_notice(
+                admission,
+                chat_id=chat_id,
+                locale=user_runtime.user_profile.locale,
+            )
+            return EventNotificationOutcome.QUOTA_EXCEEDED
+        if not isinstance(admission, NotificationQuotaReservation):
+            raise RuntimeError("Unexpected notification quota admission.")
+
+        try:
+            generated = await generate_response(
+                prompt=_notification_prompt(event),
+                user_runtime=user_runtime,
+                tool_store=HarleToolStore(),
+            )
+            await self.messenger.send_message(
+                chat_id=chat_id,
+                text=generated.result.response_text,
+            )
+            await self.quotas.complete(admission)
+            return EventNotificationOutcome.DELIVERED
+        finally:
+            self.quotas.release(admission)
+
+    async def _send_quota_exhausted_notice(
+        self,
+        exceeded: NotificationQuotaExceeded,
+        *,
+        chat_id: int,
+        locale: str,
+    ) -> None:
+        if not await self.quotas.claim_exhaustion_notice(exceeded):
+            return
         await self.messenger.send_message(
             chat_id=chat_id,
-            text=generated.result.response_text,
+            text=_quota_exhausted_text(exceeded, locale),
         )
-        return True
+        await self.quotas.mark_exhaustion_notice_delivered(exceeded)
 
 
 def _notification_prompt(event: InternalEvent) -> str:
@@ -80,3 +133,19 @@ def _telegram_chat_id(external_user_id: str) -> int:
     if chat_id <= 0:
         raise ValueError("Telegram identity must be a positive integer.")
     return chat_id
+
+
+def _quota_exhausted_text(
+    exceeded: NotificationQuotaExceeded,
+    locale: str,
+) -> str:
+    resets_at = exceeded.resets_at.isoformat().replace("+00:00", "Z")
+    if locale.casefold().startswith("es"):
+        return (
+            f"Alcanzaste el límite mensual de {exceeded.limit} notificaciones "
+            f"de eventos. Tu disponibilidad se restablece el {resets_at}."
+        )
+    return (
+        f"You reached your monthly limit of {exceeded.limit} event notifications. "
+        f"Your allowance resets at {resets_at}."
+    )

@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 from harle_domain.events import InternalEvent
 from harle_services.events import (
     AgentsScheduler,
+    EventNotificationOutcome,
     EventNotificationService,
     EventService,
 )
@@ -29,11 +30,11 @@ class FakeEvents:
 
 
 class FakeNotifications:
-    def __init__(self, outcomes: list[bool]) -> None:
+    def __init__(self, outcomes: list[EventNotificationOutcome]) -> None:
         self.outcomes = outcomes
         self.attempts: list[UUID] = []
 
-    async def notify(self, event: InternalEvent) -> bool:
+    async def notify(self, event: InternalEvent) -> EventNotificationOutcome:
         self.attempts.append(event.id)
         return self.outcomes.pop(0)
 
@@ -43,7 +44,12 @@ def test_scheduler_marks_success_and_retries_failed_delivery() -> None:
         first = cast(InternalEvent, SimpleNamespace(id=uuid4()))
         second = cast(InternalEvent, SimpleNamespace(id=uuid4()))
         events = FakeEvents([first, second])
-        notifications = FakeNotifications([True, False])
+        notifications = FakeNotifications(
+            [
+                EventNotificationOutcome.DELIVERED,
+                EventNotificationOutcome.SKIPPED,
+            ],
+        )
         scheduler = AgentsScheduler(
             events=cast(EventService, events),
             notifications=cast(EventNotificationService, notifications),
@@ -52,7 +58,7 @@ def test_scheduler_marks_success_and_retries_failed_delivery() -> None:
         assert await scheduler.run_once() == 1
         assert events.marked == {first.id}
 
-        notifications.outcomes.append(True)
+        notifications.outcomes.append(EventNotificationOutcome.DELIVERED)
         assert await scheduler.run_once() == 1
         assert events.marked == {first.id, second.id}
         assert notifications.attempts == [first.id, second.id, second.id]

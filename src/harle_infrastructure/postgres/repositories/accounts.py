@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TypeVar
 from uuid import UUID
 
 import asyncpg
@@ -22,6 +23,7 @@ RESOLVED_USER_COLUMNS = """
     users.created_at AS user_created_at,
     users.updated_at AS user_updated_at,
     plans.monthly_request_limit,
+    plans.monthly_notification_limit,
     plans.active AS plan_active,
     plans.created_at AS plan_created_at,
     plans.updated_at AS plan_updated_at,
@@ -33,6 +35,7 @@ RESOLVED_USER_COLUMNS = """
     identities.created_at AS identity_created_at,
     identities.updated_at AS identity_updated_at
 """
+FieldT = TypeVar("FieldT")
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,14 +91,14 @@ class PostgresAccountRepository:
 
 
 def _resolved_user_from_row(row: asyncpg.Record) -> ResolvedUser:
-    user_id = _uuid(row, "user_id")
+    user_id = _required(row, "user_id", UUID)
     return ResolvedUser(
         user=User(
             id=user_id,
-            display_name=_text(row, "user_display_name"),
-            plan_code=_text(row, "plan_code"),
+            display_name=_required(row, "user_display_name", str),
+            plan_code=_required(row, "plan_code", str),
             subscription_status=SubscriptionStatus(
-                _text(row, "subscription_status"),
+                _required(row, "subscription_status", str),
             ),
             subscription_valid_until=_optional_datetime(
                 row,
@@ -105,49 +108,45 @@ def _resolved_user_from_row(row: asyncpg.Record) -> ResolvedUser:
                 row,
                 "subscription_synced_at",
             ),
-            created_at=_datetime(row, "user_created_at"),
-            updated_at=_datetime(row, "user_updated_at"),
+            created_at=_required(row, "user_created_at", datetime),
+            updated_at=_required(row, "user_updated_at", datetime),
         ),
         plan=Plan(
-            code=_text(row, "plan_code"),
-            monthly_request_limit=_integer(
+            code=_required(row, "plan_code", str),
+            monthly_request_limit=_required(
                 row,
                 "monthly_request_limit",
+                int,
             ),
-            active=_boolean(row, "plan_active"),
-            created_at=_datetime(row, "plan_created_at"),
-            updated_at=_datetime(row, "plan_updated_at"),
+            monthly_notification_limit=_required(
+                row,
+                "monthly_notification_limit",
+                int,
+            ),
+            active=_required(row, "plan_active", bool),
+            created_at=_required(row, "plan_created_at", datetime),
+            updated_at=_required(row, "plan_updated_at", datetime),
         ),
         identity=ExternalIdentity(
-            id=_uuid(row, "identity_id"),
-            user_id=_uuid(row, "identity_user_id"),
-            provider=_text(row, "provider"),
-            external_user_id=_text(row, "external_user_id"),
-            display_name=_text(row, "identity_display_name"),
-            created_at=_datetime(row, "identity_created_at"),
-            updated_at=_datetime(row, "identity_updated_at"),
+            id=_required(row, "identity_id", UUID),
+            user_id=_required(row, "identity_user_id", UUID),
+            provider=_required(row, "provider", str),
+            external_user_id=_required(row, "external_user_id", str),
+            display_name=_required(row, "identity_display_name", str),
+            created_at=_required(row, "identity_created_at", datetime),
+            updated_at=_required(row, "identity_updated_at", datetime),
         ),
     )
 
 
-def _text(row: asyncpg.Record, key: str) -> str:
+def _required(
+    row: asyncpg.Record,
+    key: str,
+    expected: type[FieldT],
+) -> FieldT:
     value: object = row[key]
-    if not isinstance(value, str):
-        raise TypeError(f"Expected {key} to be text.")
-    return value
-
-
-def _uuid(row: asyncpg.Record, key: str) -> UUID:
-    value: object = row[key]
-    if not isinstance(value, UUID):
-        raise TypeError(f"Expected {key} to be a UUID.")
-    return value
-
-
-def _datetime(row: asyncpg.Record, key: str) -> datetime:
-    value: object = row[key]
-    if not isinstance(value, datetime):
-        raise TypeError(f"Expected {key} to be a datetime.")
+    if not isinstance(value, expected):
+        raise TypeError(f"Unexpected {key} value.")
     return value
 
 
@@ -160,18 +159,4 @@ def _optional_datetime(
         return None
     if not isinstance(value, datetime):
         raise TypeError(f"Expected {key} to be a datetime or null.")
-    return value
-
-
-def _integer(row: asyncpg.Record, key: str) -> int:
-    value: object = row[key]
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise TypeError(f"Expected {key} to be an integer.")
-    return value
-
-
-def _boolean(row: asyncpg.Record, key: str) -> bool:
-    value: object = row[key]
-    if not isinstance(value, bool):
-        raise TypeError(f"Expected {key} to be a boolean.")
     return value

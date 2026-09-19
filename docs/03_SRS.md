@@ -37,7 +37,7 @@ This document distinguishes the implemented controlled-beta baseline from target
 - Telegram updates are persisted and deduplicated before assistant execution. Consecutive messages may join a turn until tool execution or delivery begins.
 - The tenth valid message within two seconds triggers a per-identity cooldown. Cooldowns escalate from 60 seconds to 5 minutes and then 1 hour, and strikes decay after normal use.
 - Monthly quotas count successful completed conversations within UTC month boundaries and include process-local in-flight reservations. Configured plan limits, rather than application constants, determine allowance.
-- Runtime authorization for inferred writes, action audits, durable work queues, automated subscription synchronization, privacy workflows, notification preferences, proactive behavior, and multi-user Google integrations remain pending.
+- Runtime authorization for inferred writes, action audits, durable work queues, automated subscription synchronization, privacy workflows, event-notification quotas and delivery records, notification preferences, proactive behavior, and multi-user Google integrations remain pending.
 
 ## User Requirements
 
@@ -58,6 +58,7 @@ This document distinguishes the implemented controlled-beta baseline from target
 - **UR-15 Transparency**: Harle shall not hide that it is AI or simulate human identity in manipulative ways.
 - **UR-16 Reliability**: Harle shall report failures clearly when it cannot answer or complete a requested action.
 - **UR-17 Efficiency**: Harle shall pursue fast and inexpensive responses suitable for frequent daily use.
+- **UR-18 Event notification allowance**: Each plan shall provide a separate, visible monthly allowance for successful event notifications without consuming conversation quota.
 
 ## System Specification
 
@@ -163,6 +164,17 @@ This document distinguishes the implemented controlled-beta baseline from target
 - **FR-99**: Telegram file identifiers shall be treated as sensitive references, excluded from logs and model context, and resolved through Telegram again when recent media is requested. Downloaded bytes shall be discarded after the active model call.
 - **FR-100**: The combined raw size of all media attached to one aggregated turn shall not exceed 12 MiB. A single attachment whose declared size exceeds that limit should be rejected before download.
 
+### Event Notification Quotas
+
+- **FR-101**: Every plan shall configure a positive monthly event-notification limit separate from its monthly conversation limit. The provisional free, basic, and max limits shall be 15, 60, and 240 notifications.
+- **FR-102**: Event-notification quota periods shall use inclusive-start and exclusive-end UTC month boundaries. Both `user_event` and `system_event` notifications shall use the same allowance.
+- **FR-103**: Quota usage shall count each successfully delivered Telegram event notification once. Failed generation, failed delivery, safe retries, blocked occurrences, and quota-exhausted notices shall not count.
+- **FR-104**: The scheduler shall reserve event-notification allowance before invoking Gemini. Admission shall include successful deliveries and in-flight reservations so concurrent work cannot exceed the configured plan limit.
+- **FR-105**: A quota-blocked occurrence shall not invoke Gemini and shall not update the event's `last_notified_at`. It may be reconsidered while its start remains in the future and shall otherwise expire under the ordinary event-notification policy.
+- **FR-106**: On the first blocked occurrence for one user in a UTC month, Harle shall send at most one static quota-exhausted Telegram notice without invoking Gemini or consuming either quota. The notice shall identify the plan limit and exact reset boundary.
+- **FR-107**: Relevant event-management responses shall make the notification limit, remaining successful deliveries, and exact reset boundary available to the user.
+- **FR-108**: Successful notification deliveries shall be recorded in a user-owned ledger with the event reference, computed occurrence start, notification window, and delivery time. Event deletion shall not restore consumed allowance, and account deletion shall handle these records under the product's deletion policy.
+
 ### Companionship and Safety
 
 - **FR-49**: Harle shall preserve a warm, useful, concise, and non-performative conversation style.
@@ -176,7 +188,7 @@ This document distinguishes the implemented controlled-beta baseline from target
 
 - **FR-55**: The controlled-beta runtime shall support request-triggered Telegram runs and process-local scheduled event-notification runs. General scheduled background work remains a later capability.
 - **FR-56**: A future agent scheduler shall select eligible users or agents for proactive checks, respecting opt-in settings, quiet periods, rate limits, and bounded prioritization rules.
-- **FR-57**: A scheduled event-notification run shall load the owning user's conversations, profiles, and relevant external context without exposing modifying tools. Future general scheduled runs may load additional authorized context and tools under the target authorization policy.
+- **FR-57**: A scheduled event-notification run shall load the owning user's conversations, profiles, and relevant external context without exposing modifying tools or consuming conversation quota. Once the separate event-notification quota is implemented, it shall reserve that allowance before Gemini. Future general scheduled runs may load additional authorized context and tools under the target authorization policy.
 - **FR-58**: The target broad-release runtime shall use durable background queues for accepted inbound work and outbound delivery. Future scheduler work, proposed actions, and integration polling shall also use durable queues when work must survive interruptions.
 - **FR-59**: The runtime shall construct user-scoped stores and tool configuration from the resolved internal user account. Only Juan's UUID-gated legacy Google Sheets compatibility path may use integration settings from process configuration.
 - **FR-60**: Stores that require external connections shall use process-wide connection pools where appropriate while preserving per-user data boundaries in store adapters.
@@ -220,6 +232,7 @@ Harle is conceptually divided into these program areas:
 - **Tool system**: Defines tool families, effects, argument contracts, authorization, prompt relevance, request-scoped handlers, and structured results.
 - **Preflight services**: Resolve identity and subscription, apply temporary bans, and reserve monthly quota before assistant execution.
 - **Event scheduler**: Selects eligible events every five minutes, wakes the owning active user's agent, sends Telegram notifications, and records successful delivery.
+- **Event-notification quota service**: Resolves plan allowance, reserves capacity before generation, records successful occurrence deliveries, and suppresses repeated quota notices.
 - **Future runtime services**: Proposed-action, audit, durable delivery, privacy, subscription-synchronization, and Google import services remain pending.
 - **External integrations**: Connects to AI providers, Telegram, PostgreSQL, Google Sheets, future productivity services, weather data, and external account or subscription systems.
 
@@ -242,9 +255,16 @@ The implemented scheduled-event flow is:
 2. It selects active one-time events with an open notification window and active recurring definitions that may produce a due occurrence.
 3. The runtime resolves the owning active user's Telegram identity and builds the user's request-scoped stores and context providers.
 4. Harle receives each event as agenda context for a user event or scheduled task context for a system event.
-5. Harle generates a concise notification without modifying tools or a monthly quota reservation.
+5. Harle generates a concise notification without modifying tools or a conversation-quota reservation.
 6. Harle sends the notification to the user's private Telegram chat.
 7. Successful delivery updates `last_notified_at`. Failed delivery remains eligible until the occurrence ends.
+
+The target event-notification quota extends this flow:
+
+1. After resolving the active user, Harle loads the plan's separate notification allowance.
+2. It reserves capacity against successful deliveries and in-flight notification work for the current UTC month.
+3. An admitted occurrence reaches Gemini and consumes allowance only after successful Telegram delivery.
+4. A blocked occurrence does not reach Gemini or update `last_notified_at`. Harle sends at most one static quota notice for that user and month.
 
 The implemented recurring-event flow is:
 
@@ -290,13 +310,13 @@ Production deployment shall provide:
 - Health checks for platform availability.
 - Connection pooling appropriate for expected user count.
 - Monitoring for request failures, provider failures, latency, token usage, and tool execution failures.
-- Monitoring for duplicate prevention, scheduler and notification failures, and future queue failures.
+- Monitoring for duplicate prevention, scheduler and notification failures, notification-quota admission and accounting, and future queue failures.
 - Enforcement of the controlled beta's single-process deployment boundary until distributed coordination exists.
 
 Open requirements that need product discovery:
 
 - Exact privacy and legal requirements for storing conversations, profiles, personal history, and finance data.
-- Subscription plan boundaries, usage limits, free trials, failed payments, and cancellation behavior.
+- Final conversation and event-notification plan limits, free trials, allowance carry-over, failed payments, and cancellation behavior.
 - Telegram authorization UX for approving, cancelling, and expiring proposed modifications.
 - Durable notification delivery, quiet periods, and external calendar integration beyond the process-local event capability.
 - The exact long-term Telegram media MIME allowlist beyond the voice-note-first controlled beta.

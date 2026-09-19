@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
-from .models import InternalEvent
+from .models import EventNotificationOccurrence, InternalEvent
 
 
 @runtime_checkable
@@ -77,3 +77,43 @@ class EventRepository(Protocol):
         user_id: UUID,
         event_id: UUID,
     ) -> InternalEvent | None: ...
+
+
+@runtime_checkable
+class EventNotificationUsageRepository(Protocol):
+    async def count_deliveries(
+        self,
+        *,
+        user_id: UUID,
+        delivered_from: datetime,
+        delivered_before: datetime,
+    ) -> int: ...
+
+    async def was_delivered(
+        self,
+        *,
+        occurrence: EventNotificationOccurrence,
+    ) -> bool: ...
+
+    async def record_delivery(
+        self,
+        *,
+        occurrence: EventNotificationOccurrence,
+        delivered_at: datetime,
+    ) -> bool: ...
+
+    async def claim_quota_notice(
+        self,
+        *,
+        user_id: UUID,
+        period_starts_at: datetime,
+        attempted_at: datetime,
+    ) -> bool: ...
+
+    async def mark_quota_notice_delivered(
+        self,
+        *,
+        user_id: UUID,
+        period_starts_at: datetime,
+        delivered_at: datetime,
+    ) -> None: ...

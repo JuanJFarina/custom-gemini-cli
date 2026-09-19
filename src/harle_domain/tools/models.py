@@ -91,6 +91,7 @@ class ToolExecutionContext:
     user_id: UUID
     timezone: str
     authorized_families: frozenset[ToolFamily]
+    monthly_notification_limit: int = 0
 
     def __post_init__(self) -> None:
         try:

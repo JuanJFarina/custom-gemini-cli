@@ -20,6 +20,7 @@ from harle_infrastructure.postgres import (
     PostgresAssistantProfileRepository,
     PostgresConversationRepository,
     PostgresConversationStore,
+    PostgresEventNotificationUsageRepository,
     PostgresEventRepository,
     PostgresExpenseRepository,
     PostgresTelegramUpdateRepository,
@@ -31,6 +32,7 @@ from harle_infrastructure.telegram import InMemoryRecentMediaStore, TelegramMess
 from harle_services.access import PreflightService
 from harle_services.events import (
     AgentsScheduler,
+    EventNotificationQuotaService,
     EventNotificationService,
     EventService,
 )
@@ -94,11 +96,17 @@ class ProcessRuntimeConfig:
     maximum_media_request_size: int = 12 * 1024 * 1024
 
 
+@dataclass(frozen=True, slots=True)
+class EventToolDependencies:
+    repository: EventRepository
+    notification_quotas: EventNotificationQuotaService
+
+
 def create_tools_injector(
     settings: LegacyGoogleSheetsSettings | None = None,
     *,
     expense_repository: ExpenseRepository | None = None,
-    event_repository: EventRepository | None = None,
+    event_tools: EventToolDependencies | None = None,
     recent_media_store: RecentMediaStore | None = None,
     media_downloader: TelegramMediaDownloader | None = None,
 ) -> ToolsInjector:
@@ -114,10 +122,11 @@ def create_tools_injector(
                 ExpenseService(expense_repository),
             ),
         )
-    if event_repository is not None:
+    if event_tools is not None:
         registrations.append(
             create_internal_events_registration(
-                EventService(event_repository),
+                EventService(event_tools.repository),
+                event_tools.notification_quotas,
             ),
         )
     if (recent_media_store is None) != (media_downloader is None):
@@ -171,6 +180,9 @@ def _build_process_runtime(
     accounts = PostgresAccountRepository(pool)
     conversations = PostgresConversationRepository(pool)
     event_repository = PostgresEventRepository(pool)
+    notification_quotas = EventNotificationQuotaService(
+        PostgresEventNotificationUsageRepository(pool),
+    )
     messenger = TelegramMessenger(
         config.telegram_bot_token,
         maximum_media_size=config.maximum_media_request_size,
@@ -188,6 +200,7 @@ def _build_process_runtime(
         preflight=preflight,
         users=users,
         messenger=messenger,
+        quotas=notification_quotas,
     )
     return ProcessRuntime(
         pool=pool,
@@ -196,7 +209,10 @@ def _build_process_runtime(
         tools=create_tools_injector(
             legacy_settings,
             expense_repository=PostgresExpenseRepository(pool),
-            event_repository=event_repository,
+            event_tools=EventToolDependencies(
+                repository=event_repository,
+                notification_quotas=notification_quotas,
+            ),
             recent_media_store=recent_media,
             media_downloader=messenger,
         ),

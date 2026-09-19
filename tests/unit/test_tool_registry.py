@@ -1,5 +1,6 @@
 import asyncio
-from datetime import datetime, timezone
+from collections.abc import Mapping
+from datetime import date, datetime, timezone
 from typing import cast
 from uuid import UUID, uuid4
 
@@ -12,24 +13,53 @@ from harle_domain.accounts import (
     SubscriptionStatus,
     User,
 )
-from harle_domain.events import EventRepository
+from harle_domain.events import EventRepository, InternalEvent
 from harle_domain.expenses import ExpenseRepository
 from harle_infrastructure.google_sheets import (
     GoogleSheetsClient,
     GoogleSheetsConnectionSettings,
     LegacyGoogleSheetsSettings,
 )
-from harle_services.bootstrap import create_tools_injector
+from harle_services.bootstrap import EventToolDependencies, create_tools_injector
+from harle_services.events import (
+    EventNotificationQuotaService,
+    NotificationQuotaStatus,
+)
 from harle_services.tools import ToolInjectionContext
+from harle_services.tools.internal_events import EventIdentifierArgs, ListEventsArgs
 from harle_utils import ToolAccessDeniedError, ToolUnavailableError
 
 NOW = datetime(2026, 8, 31, tzinfo=timezone.utc)
+
+
+class EmptyEventRepository:
+    async def list_for_range(self, **_: object) -> list[InternalEvent]:
+        return []
+
+    async def disable(self, **_: object) -> InternalEvent | None:
+        return None
+
+
+class FakeNotificationQuotas:
+    async def status(
+        self,
+        *,
+        user_id: UUID,
+        monthly_limit: int,
+    ) -> NotificationQuotaStatus:
+        del user_id
+        return NotificationQuotaStatus(
+            limit=monthly_limit,
+            remaining=monthly_limit - 1,
+            resets_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        )
 
 
 def resolved_user(user_id: UUID) -> ResolvedUser:
     plan = Plan(
         code="basic",
         monthly_request_limit=480,
+        monthly_notification_limit=60,
         active=True,
         created_at=NOW,
         updated_at=NOW,
@@ -60,6 +90,10 @@ def test_tool_access_matrix_and_lazy_sheets_configuration() -> None:
     juan_id = uuid4()
     expense_repository = cast(ExpenseRepository, object())
     event_repository = cast(EventRepository, object())
+    event_tools = EventToolDependencies(
+        repository=event_repository,
+        notification_quotas=cast(EventNotificationQuotaService, object()),
+    )
     incomplete_settings = LegacyGoogleSheetsSettings(
         _env_file=None,
         LEGACY_GOOGLE_SHEETS_USER_ID=juan_id,
@@ -67,7 +101,7 @@ def test_tool_access_matrix_and_lazy_sheets_configuration() -> None:
     commercial_store = create_tools_injector(
         incomplete_settings,
         expense_repository=expense_repository,
-        event_repository=event_repository,
+        event_tools=event_tools,
     ).inject(
         ToolInjectionContext(
             resolved_user=resolved_user(uuid4()),
@@ -99,7 +133,7 @@ def test_tool_access_matrix_and_lazy_sheets_configuration() -> None:
     juan_store = create_tools_injector(
         configured_settings,
         expense_repository=expense_repository,
-        event_repository=event_repository,
+        event_tools=event_tools,
     ).inject(
         ToolInjectionContext(
             resolved_user=resolved_user(juan_id),
@@ -118,7 +152,7 @@ def test_tool_access_matrix_and_lazy_sheets_configuration() -> None:
     event_store = create_tools_injector(
         configured_settings,
         expense_repository=expense_repository,
-        event_repository=event_repository,
+        event_tools=event_tools,
     ).inject(
         ToolInjectionContext(
             resolved_user=resolved_user(juan_id),
@@ -140,7 +174,10 @@ def test_tool_filter_uses_complete_terms_and_falls_back_to_all_families() -> Non
     store = create_tools_injector(
         LegacyGoogleSheetsSettings(_env_file=None),
         expense_repository=cast(ExpenseRepository, object()),
-        event_repository=cast(EventRepository, object()),
+        event_tools=EventToolDependencies(
+            repository=cast(EventRepository, object()),
+            notification_quotas=cast(EventNotificationQuotaService, object()),
+        ),
     ).inject(
         ToolInjectionContext(
             resolved_user=resolved_user(uuid4()),
@@ -152,6 +189,46 @@ def test_tool_filter_uses_complete_terms_and_falls_back_to_all_families() -> Non
     names = {tool.name for tool in store.tools}
     assert "add_expense" in names
     assert "create_event" in names
+
+
+def test_event_tools_expose_plan_notification_allowance() -> None:
+    store = create_tools_injector(
+        event_tools=EventToolDependencies(
+            repository=cast(EventRepository, EmptyEventRepository()),
+            notification_quotas=cast(
+                EventNotificationQuotaService,
+                FakeNotificationQuotas(),
+            ),
+        ),
+    ).inject(
+        ToolInjectionContext(
+            resolved_user=resolved_user(uuid4()),
+            prompt="List my events",
+            timezone="UTC",
+        ),
+    )
+
+    result = asyncio.run(
+        store.get("list_events").handler(
+            ListEventsArgs(
+                start_date=date(2026, 8, 31),
+                end_date=date(2026, 8, 31),
+            ),
+        ),
+    )
+    mutation_result = asyncio.run(
+        store.get("disable_event").handler(
+            EventIdentifierArgs(event_id=uuid4()),
+        ),
+    )
+
+    for tool_result in (result, mutation_result):
+        assert isinstance(tool_result.result, Mapping)
+        assert tool_result.result["notification_quota"] == {
+            "monthly_limit": 60,
+            "remaining": 59,
+            "resets_at": "2026-09-01T00:00:00Z",
+        }
 
 
 def test_google_sheets_client_rechecks_uuid_before_write() -> None:

@@ -1,10 +1,12 @@
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Annotated, TypeVar
 from uuid import UUID
 
 import asyncpg
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from harle_domain.events import (
     EventDetails,
@@ -37,6 +39,25 @@ EVENT_COLUMNS = """
     created_at,
     updated_at
 """
+FieldT = TypeVar("FieldT")
+MonthDay = Annotated[int, Field(strict=True, ge=1, le=31)]
+
+
+class _WeeklyRecurrenceRow(BaseModel):
+    week_days: list[WeekDay] = Field(min_length=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class _MonthlyRecurrenceRow(BaseModel):
+    month_days: list[MonthDay] = Field(min_length=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+_RECURRENCE_ADAPTER: TypeAdapter[_WeeklyRecurrenceRow | _MonthlyRecurrenceRow] = (
+    TypeAdapter(_WeeklyRecurrenceRow | _MonthlyRecurrenceRow)
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,27 +357,27 @@ class PostgresEventRepository:
 
 def _event_from_row(row: asyncpg.Record) -> InternalEvent:
     return InternalEvent(
-        id=_uuid(row, "id"),
-        user_id=_uuid(row, "user_id"),
+        id=_required(row, "id", UUID),
+        user_id=_required(row, "user_id", UUID),
         details=EventDetails(
-            title=_text(row, "title"),
-            description=_text(row, "description"),
+            title=_required(row, "title", str),
+            description=_required(row, "description", str),
             interval=EventInterval(
-                starts_at=_datetime(row, "starts_at"),
-                ends_at=_datetime(row, "ends_at"),
-                timezone=_text(row, "timezone"),
-                all_day=_boolean(row, "all_day"),
+                starts_at=_required(row, "starts_at", datetime),
+                ends_at=_required(row, "ends_at", datetime),
+                timezone=_required(row, "timezone", str),
+                all_day=_required(row, "all_day", bool),
             ),
-            event_type=EventType(_text(row, "event_type")),
-            status=EventStatus(_text(row, "status")),
+            event_type=EventType(_required(row, "event_type", str)),
+            status=EventStatus(_required(row, "status", str)),
         ),
         notification=EventNotification(
-            window_start=_datetime(row, "notification_window_start"),
+            window_start=_required(row, "notification_window_start", datetime),
             last_notified_at=_optional_datetime(row, "last_notified_at"),
         ),
         timestamps=EventTimestamps(
-            created_at=_datetime(row, "created_at"),
-            updated_at=_datetime(row, "updated_at"),
+            created_at=_required(row, "created_at", datetime),
+            updated_at=_required(row, "updated_at", datetime),
         ),
         recurrence_rule=_recurrence_rule(row["recurrence_rule"]),
     )
@@ -367,24 +388,14 @@ def _require_event_owner(user_id: UUID, event: InternalEvent) -> None:
         raise ValueError("Event owner does not match user identifier.")
 
 
-def _text(row: asyncpg.Record, key: str) -> str:
+def _required(
+    row: asyncpg.Record,
+    key: str,
+    expected: type[FieldT],
+) -> FieldT:
     value: object = row[key]
-    if not isinstance(value, str):
-        raise TypeError(f"Expected {key} to be text.")
-    return value
-
-
-def _uuid(row: asyncpg.Record, key: str) -> UUID:
-    value: object = row[key]
-    if not isinstance(value, UUID):
-        raise TypeError(f"Expected {key} to be a UUID.")
-    return value
-
-
-def _datetime(row: asyncpg.Record, key: str) -> datetime:
-    value: object = row[key]
-    if not isinstance(value, datetime):
-        raise TypeError(f"Expected {key} to be a datetime.")
+    if not isinstance(value, expected):
+        raise TypeError(f"Unexpected {key} value.")
     return value
 
 
@@ -413,23 +424,7 @@ def _recurrence_rule(value: object) -> RecurrenceRule | None:
     if value is None:
         return None
     decoded: object = json.loads(value) if isinstance(value, str) else value
-    if not isinstance(decoded, Mapping):
-        raise TypeError("Expected recurrence_rule to be a JSON object.")
-    week_days = decoded.get("week_days")
-    month_days = decoded.get("month_days")
-    if isinstance(week_days, list) and month_days is None:
-        if not all(isinstance(day, str) for day in week_days):
-            raise TypeError("Expected recurrence weekdays to be text.")
-        return WeeklyRecurrence(frozenset(WeekDay(day) for day in week_days))
-    if isinstance(month_days, list) and week_days is None:
-        if not all(isinstance(day, int) for day in month_days):
-            raise TypeError("Expected recurrence month days to be integers.")
-        return MonthlyRecurrence(frozenset(month_days))
-    raise ValueError("Recurrence rule must contain week_days or month_days.")
-
-
-def _boolean(row: asyncpg.Record, key: str) -> bool:
-    value: object = row[key]
-    if not isinstance(value, bool):
-        raise TypeError(f"Expected {key} to be a boolean.")
-    return value
+    recurrence = _RECURRENCE_ADAPTER.validate_python(decoded)
+    if isinstance(recurrence, _WeeklyRecurrenceRow):
+        return WeeklyRecurrence(frozenset(recurrence.week_days))
+    return MonthlyRecurrence(frozenset(recurrence.month_days))

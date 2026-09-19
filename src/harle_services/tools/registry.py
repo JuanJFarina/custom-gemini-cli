@@ -54,6 +54,7 @@ class ToolRegistry:
         user_id: UUID,
         timezone: str,
         authorized_families: frozenset[ToolFamily],
+        monthly_notification_limit: int = 0,
     ) -> HarleToolStore:
         unavailable = authorized_families - self.families
         if unavailable:
@@ -63,6 +64,7 @@ class ToolRegistry:
             user_id=user_id,
             timezone=timezone,
             authorized_families=authorized_families,
+            monthly_notification_limit=monthly_notification_limit,
         )
         tools: list[HarleTool] = []
         instructions: list[str] = []

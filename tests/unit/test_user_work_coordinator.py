@@ -124,12 +124,12 @@ def test_coordinator_joins_ordered_messages_and_cancels_pre_tool_reasoning() -> 
                 1,
                 "First",
                 TelegramMediaReference(
-                update_id=1,
-                file_id="image",
-                file_unique_id="unique-image",
-                kind=MediaKind.IMAGE,
-                mime_type="image/jpeg",
-            ),
+                    update_id=1,
+                    file_id="image",
+                    file_unique_id="unique-image",
+                    kind=MediaKind.IMAGE,
+                    mime_type="image/jpeg",
+                ),
             ),
         )
         turn = await coordinator.current_turn(10)
