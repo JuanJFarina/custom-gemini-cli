@@ -24,6 +24,7 @@ DATABASE_URL = os.environ.get("TEST_POSTGRES_DATABASE_URL")
 ROOT = Path(__file__).parents[2]
 SCHEMA_PATHS = (
     ROOT / "scripts" / "apply_multi_user_runtime.sql",
+    ROOT / "scripts" / "apply_subscription_interactions.sql",
     ROOT / "scripts" / "apply_internal_expenses.sql",
 )
 NOW = datetime(2026, 8, 31, 12, tzinfo=timezone.utc)
@@ -38,9 +39,15 @@ async def _insert_user(
         """
         INSERT INTO users (
             id, name, display_name, plan_code,
-            subscription_status, subscription_synced_at
+            subscription_status, subscription_synced_at,
+            subscription_period_starts_at,
+            subscription_period_ends_at
         )
-        VALUES ($1, $2, $2, 'free', 'active', NOW())
+        VALUES (
+            $1, $2, $2, 'free', 'active', NOW(),
+            NOW() - INTERVAL '1 day',
+            NOW() + INTERVAL '29 days'
+        )
         """,
         user_id,
         name,

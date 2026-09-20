@@ -8,8 +8,6 @@ from .preflight import (
     QuotaExceeded,
     QuotaReservation,
     TemporaryBan,
-    UtcMonthPeriod,
-    utc_month_period,
 )
 
 __all__ = [
@@ -22,6 +20,4 @@ __all__ = [
     "QuotaReservation",
     "STRIKE_DECAY_INTERVAL",
     "TemporaryBan",
-    "UtcMonthPeriod",
-    "utc_month_period",
 ]

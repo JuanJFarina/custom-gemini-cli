@@ -1,18 +1,17 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
-from typing import Annotated, Literal, TypeVar
+from datetime import date, timedelta
+from typing import TypeVar
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from harle_domain.events import (
-    EventType,
+    InteractionEvent,
     InternalEvent,
     MonthlyRecurrence,
     RecurrenceRule,
-    WeekDay,
     WeeklyRecurrence,
 )
 from harle_domain.tools import (
@@ -24,38 +23,25 @@ from harle_domain.tools import (
     ToolHandler,
 )
 from harle_services.events import (
-    AllDayEventSchedule,
     CreateEvent,
     EventNotificationQuotaService,
     EventQuery,
-    EventSchedule,
     EventService,
-    TimedEventSchedule,
+    InteractionEventService,
     UpdateEvent,
 )
 
+from .event_schedules import (
+    CreateEventArgs,
+    UpdateEventArgs,
+    notification_lead,
+    optional_schedule,
+    recurrence_rule,
+    schedule,
+)
 from .registry import ToolFamilyRegistration, ToolHandlerFactory
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
-ScheduleKind = Literal["timed", "all_day"]
-
-
-class WeeklyRecurrenceArgs(BaseModel):
-    week_days: set[WeekDay] = Field(min_length=1)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-MonthDay = Annotated[int, Field(ge=1, le=31)]
-
-
-class MonthlyRecurrenceArgs(BaseModel):
-    month_days: set[MonthDay] = Field(min_length=1)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-RecurrenceArgs = WeeklyRecurrenceArgs | MonthlyRecurrenceArgs
 
 
 class ListEventsArgs(BaseModel):
@@ -69,61 +55,6 @@ class ListEventsArgs(BaseModel):
     def validate_range(self) -> "ListEventsArgs":
         if self.end_date < self.start_date:
             raise ValueError("Event range end date cannot precede its start date.")
-        return self
-
-
-class CreateEventArgs(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
-    description: str = Field(default="", max_length=2000)
-    starts_at: datetime | None = None
-    ends_at: datetime | None = None
-    start_date: date | None = None
-    end_date: date | None = None
-    timezone: str | None = Field(default=None, min_length=1)
-    event_type: EventType = EventType.USER_EVENT
-    notify_minutes_before: int = Field(default=0, ge=0)
-    recurrence_rule: RecurrenceArgs | None = None
-
-    model_config = ConfigDict(extra="forbid")
-
-    @model_validator(mode="after")
-    def validate_schedule(self) -> "CreateEventArgs":
-        _schedule_kind(self, required=True)
-        return self
-
-
-class UpdateEventArgs(BaseModel):
-    event_id: UUID
-    title: str | None = Field(default=None, min_length=1, max_length=200)
-    description: str | None = Field(default=None, max_length=2000)
-    starts_at: datetime | None = None
-    ends_at: datetime | None = None
-    start_date: date | None = None
-    end_date: date | None = None
-    timezone: str | None = Field(default=None, min_length=1)
-    event_type: EventType | None = None
-    notify_minutes_before: int | None = Field(default=None, ge=0)
-    recurrence_rule: RecurrenceArgs | None = None
-
-    model_config = ConfigDict(extra="forbid")
-
-    @property
-    def replaces_recurrence(self) -> bool:
-        return "recurrence_rule" in self.model_fields_set
-
-    @model_validator(mode="after")
-    def validate_changes(self) -> "UpdateEventArgs":
-        schedule_kind = _schedule_kind(self, required=False)
-        changes = (
-            self.title,
-            self.description,
-            schedule_kind,
-            self.event_type,
-            self.notify_minutes_before,
-            self.replaces_recurrence,
-        )
-        if changes == (None, None, None, None, None, False):
-            raise ValueError("At least one event change is required.")
         return self
 
 
@@ -145,7 +76,8 @@ SHARED_INSTRUCTIONS = """For every internal event tool:
 - On update, omit recurrence_rule to preserve it or send null to make the event one-time.
 - Recurring events remain one event definition. A missing month day produces no occurrence, and every update changes the complete definition.
 - Normal reads hide disabled events; include them only when explicitly requested. Disabling is reversible and deletion is permanent.
-- Event results include the user's separate monthly notification limit, remaining allowance, and UTC reset boundary.
+- Each user also owns one interaction_event with no schedule. It can be disabled or re-enabled but cannot be updated or deleted.
+- Event results include the user's separate subscription-period notification limit, remaining allowance, and period end.
 - Events never create external calendar work."""
 
 DEFINITIONS = (
@@ -208,6 +140,7 @@ DEFINITIONS = (
 
 def create_internal_events_registration(
     service: EventService,
+    interactions: InteractionEventService,
     notification_quotas: EventNotificationQuotaService,
 ) -> ToolFamilyRegistration:
     def build_handlers(
@@ -215,6 +148,7 @@ def create_internal_events_registration(
     ) -> Mapping[str, ToolHandler]:
         return _EventToolHandlers(
             service,
+            interactions,
             notification_quotas,
             context,
         ).mapping()
@@ -225,6 +159,7 @@ def create_internal_events_registration(
 @dataclass(frozen=True, slots=True)
 class _EventToolHandlers:
     service: EventService
+    interactions: InteractionEventService
     notification_quotas: EventNotificationQuotaService
     context: ToolExecutionContext
 
@@ -242,6 +177,9 @@ class _EventToolHandlers:
         self.context.require_family(FAMILY)
         validated = _require_model(args, ListEventsArgs)
         notification_quota = await self._notification_quota()
+        interaction_event = await self.interactions.get(
+            user_id=self.context.user_id,
+        )
         events = await self.service.list_for_range(
             user_id=self.context.user_id,
             query=EventQuery(
@@ -258,6 +196,11 @@ class _EventToolHandlers:
                 "start_date": validated.start_date.isoformat(),
                 "end_date": validated.end_date.isoformat(),
                 "events": [_event_payload(event) for event in events],
+                "interaction_event": (
+                    _interaction_event_payload(interaction_event)
+                    if interaction_event is not None
+                    else None
+                ),
                 "notification_quota": notification_quota,
             },
         )
@@ -271,12 +214,12 @@ class _EventToolHandlers:
             event=CreateEvent(
                 title=validated.title,
                 description=validated.description,
-                schedule=_schedule(validated, self.context.timezone),
+                schedule=schedule(validated, self.context.timezone),
                 event_type=validated.event_type,
                 notify_before=timedelta(
                     minutes=validated.notify_minutes_before,
                 ),
-                recurrence_rule=_recurrence_rule(validated.recurrence_rule),
+                recurrence_rule=recurrence_rule(validated.recurrence_rule),
             ),
         )
         return ToolCallResult(
@@ -288,20 +231,30 @@ class _EventToolHandlers:
         self.context.require_family(FAMILY)
         validated = _require_model(args, UpdateEventArgs)
         notification_quota = await self._notification_quota()
+        interaction_event = await self.interactions.get(
+            user_id=self.context.user_id,
+        )
+        if interaction_event is not None and interaction_event.id == validated.event_id:
+            return ToolCallResult(
+                called_tool_name="update_event",
+                result=_protected_interaction_payload(
+                    interaction_event,
+                    "updated",
+                    notification_quota,
+                ),
+            )
         event = await self.service.update(
             user_id=self.context.user_id,
             event_id=validated.event_id,
             changes=UpdateEvent(
                 title=validated.title,
                 description=validated.description,
-                schedule=_optional_schedule(validated, self.context.timezone),
+                schedule=optional_schedule(validated, self.context.timezone),
                 event_type=validated.event_type,
-                notify_before=(
-                    timedelta(minutes=validated.notify_minutes_before)
-                    if validated.notify_minutes_before is not None
-                    else None
+                notify_before=notification_lead(
+                    validated.notify_minutes_before,
                 ),
-                recurrence_rule=_recurrence_rule(validated.recurrence_rule),
+                recurrence_rule=recurrence_rule(validated.recurrence_rule),
                 replace_recurrence=validated.replaces_recurrence,
             ),
         )
@@ -318,9 +271,23 @@ class _EventToolHandlers:
             user_id=self.context.user_id,
             event_id=validated.event_id,
         )
+        interaction_event = None
+        if event is None:
+            interaction_event = await self.interactions.disable(
+                user_id=self.context.user_id,
+                event_id=validated.event_id,
+            )
         return ToolCallResult(
             called_tool_name="disable_event",
-            result=_mutation_payload(event, "disabled", notification_quota),
+            result=(
+                _interaction_mutation_payload(
+                    interaction_event,
+                    "disabled",
+                    notification_quota,
+                )
+                if interaction_event is not None
+                else _mutation_payload(event, "disabled", notification_quota)
+            ),
         )
 
     async def enable_event(self, args: BaseModel) -> ToolCallResult:
@@ -331,15 +298,41 @@ class _EventToolHandlers:
             user_id=self.context.user_id,
             event_id=validated.event_id,
         )
+        interaction_event = None
+        if event is None:
+            interaction_event = await self.interactions.enable(
+                user_id=self.context.user_id,
+                event_id=validated.event_id,
+            )
         return ToolCallResult(
             called_tool_name="enable_event",
-            result=_mutation_payload(event, "enabled", notification_quota),
+            result=(
+                _interaction_mutation_payload(
+                    interaction_event,
+                    "enabled",
+                    notification_quota,
+                )
+                if interaction_event is not None
+                else _mutation_payload(event, "enabled", notification_quota)
+            ),
         )
 
     async def delete_event(self, args: BaseModel) -> ToolCallResult:
         self.context.require_family(FAMILY)
         validated = _require_model(args, EventIdentifierArgs)
         notification_quota = await self._notification_quota()
+        interaction_event = await self.interactions.get(
+            user_id=self.context.user_id,
+        )
+        if interaction_event is not None and interaction_event.id == validated.event_id:
+            return ToolCallResult(
+                called_tool_name="delete_event",
+                result=_protected_interaction_payload(
+                    interaction_event,
+                    "deleted",
+                    notification_quota,
+                ),
+            )
         event = await self.service.delete(
             user_id=self.context.user_id,
             event_id=validated.event_id,
@@ -365,75 +358,6 @@ def _event_registration(
         DEFINITIONS,
         handler_factory,
     )
-
-
-def _schedule(
-    args: CreateEventArgs | UpdateEventArgs,
-    default_timezone: str,
-) -> EventSchedule:
-    schedule = _optional_schedule(args, default_timezone)
-    if schedule is None:
-        raise ValueError("A complete event schedule is required.")
-    return schedule
-
-
-def _optional_schedule(
-    args: CreateEventArgs | UpdateEventArgs,
-    default_timezone: str,
-) -> EventSchedule | None:
-    kind = _schedule_kind(args, required=False)
-    if kind is None:
-        return None
-    timezone_name = args.timezone or default_timezone
-    if kind == "timed":
-        assert args.starts_at is not None
-        assert args.ends_at is not None
-        return TimedEventSchedule(
-            starts_at=args.starts_at,
-            ends_at=args.ends_at,
-            timezone_name=timezone_name,
-        )
-    assert args.start_date is not None
-    assert args.end_date is not None
-    return AllDayEventSchedule(
-        start_date=args.start_date,
-        end_date=args.end_date,
-        timezone_name=timezone_name,
-    )
-
-
-def _schedule_kind(
-    args: CreateEventArgs | UpdateEventArgs,
-    *,
-    required: bool,
-) -> ScheduleKind | None:
-    timed_values = (args.starts_at, args.ends_at)
-    all_day_values = (args.start_date, args.end_date)
-    has_timed = any(value is not None for value in timed_values)
-    has_all_day = any(value is not None for value in all_day_values)
-    if has_timed and has_all_day:
-        raise ValueError("Use either a timed or an all-day event schedule.")
-    if has_timed:
-        if any(value is None for value in timed_values):
-            raise ValueError("Timed events require both starts_at and ends_at.")
-        return "timed"
-    if has_all_day:
-        if any(value is None for value in all_day_values):
-            raise ValueError("All-day events require both start_date and end_date.")
-        return "all_day"
-    if args.timezone is not None:
-        raise ValueError("A timezone can only be supplied with an event schedule.")
-    if required:
-        raise ValueError("A timed or all-day event schedule is required.")
-    return None
-
-
-def _recurrence_rule(value: RecurrenceArgs | None) -> RecurrenceRule | None:
-    if isinstance(value, WeeklyRecurrenceArgs):
-        return WeeklyRecurrence(frozenset(value.week_days))
-    if isinstance(value, MonthlyRecurrenceArgs):
-        return MonthlyRecurrence(frozenset(value.month_days))
-    return None
 
 
 def _recurrence_payload(
@@ -462,18 +386,50 @@ def _mutation_payload(
     }
 
 
+def _interaction_mutation_payload(
+    event: InteractionEvent | None,
+    operation: str,
+    notification_quota: Mapping[str, object],
+) -> Mapping[str, object]:
+    return {
+        "ok": event is not None,
+        "operation": operation,
+        "reason": None if event is not None else "Event was not found.",
+        "event": (_interaction_event_payload(event) if event is not None else None),
+        "notification_quota": notification_quota,
+    }
+
+
+def _protected_interaction_payload(
+    event: InteractionEvent,
+    operation: str,
+    notification_quota: Mapping[str, object],
+) -> Mapping[str, object]:
+    return {
+        "ok": False,
+        "operation": operation,
+        "reason": "Interaction events can only be disabled or re-enabled.",
+        "event": _interaction_event_payload(event),
+        "notification_quota": notification_quota,
+    }
+
+
 async def _notification_quota_payload(
     service: EventNotificationQuotaService,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
+    period = context.subscription_period
+    if period is None:
+        raise ValueError("Subscription period is required for event tools.")
     status = await service.status(
         user_id=context.user_id,
         monthly_limit=context.monthly_notification_limit,
+        period=period,
     )
     return {
-        "monthly_limit": status.limit,
+        "period_limit": status.limit,
         "remaining": status.remaining,
-        "resets_at": status.resets_at.isoformat().replace("+00:00", "Z"),
+        "period_ends_at": status.resets_at.isoformat().replace("+00:00", "Z"),
     }
 
 
@@ -507,6 +463,26 @@ def _event_payload(event: InternalEvent) -> Mapping[str, object]:
         "last_notified_at": (
             event.last_notified_at.astimezone(timezone_info).isoformat()
             if event.last_notified_at is not None
+            else None
+        ),
+    }
+
+
+def _interaction_event_payload(
+    event: InteractionEvent,
+) -> Mapping[str, object]:
+    return {
+        "event_id": str(event.id),
+        "event_type": "interaction_event",
+        "status": event.status.value,
+        "last_user_message_at": (
+            event.last_user_message_at.isoformat()
+            if event.last_user_message_at is not None
+            else None
+        ),
+        "last_agent_message_at": (
+            event.last_agent_message_at.isoformat()
+            if event.last_agent_message_at is not None
             else None
         ),
     }

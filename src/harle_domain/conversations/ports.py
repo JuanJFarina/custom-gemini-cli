@@ -37,3 +37,13 @@ class ConversationUsageRepository(Protocol):
         created_from: datetime,
         created_before: datetime,
     ) -> int: ...
+
+
+@runtime_checkable
+class ScheduledConversationStore(Protocol):
+    async def save_scheduled(
+        self,
+        *,
+        response_text: str,
+        model: str,
+    ) -> None: ...

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from uuid import UUID
 
@@ -16,6 +16,18 @@ class SubscriptionStatus(str, Enum):
 class TimestampedRecord:
     created_at: datetime
     updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class SubscriptionPeriod:
+    starts_at: datetime
+    ends_at: datetime
+
+    def __post_init__(self) -> None:
+        _require_utc(self.starts_at, field_name="subscription period start")
+        _require_utc(self.ends_at, field_name="subscription period end")
+        if self.ends_at <= self.starts_at:
+            raise ValueError("Subscription period end must follow its start.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,10 +51,16 @@ class User(TimestampedRecord):
     subscription_status: SubscriptionStatus
     subscription_valid_until: datetime | None
     subscription_synced_at: datetime | None
+    subscription_period: SubscriptionPeriod | None
 
     def __post_init__(self) -> None:
         _require_non_empty(self.display_name, field_name="user display name")
         _require_non_empty(self.plan_code, field_name="user plan code")
+
+    def require_subscription_period(self) -> SubscriptionPeriod:
+        if self.subscription_period is None:
+            raise ValueError("Subscription period boundaries are required.")
+        return self.subscription_period
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,3 +99,8 @@ class ResolvedUser:
 def _require_non_empty(value: str, *, field_name: str) -> None:
     if not value.strip():
         raise ValueError(f"{field_name.capitalize()} cannot be empty.")
+
+
+def _require_utc(value: datetime, *, field_name: str) -> None:
+    if value.tzinfo is None or value.utcoffset() != timedelta(0):
+        raise ValueError(f"{field_name.capitalize()} must use UTC.")

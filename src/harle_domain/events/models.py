@@ -183,6 +183,36 @@ class InternalEvent:
         return self.timestamps.updated_at
 
 
+@dataclass(frozen=True, slots=True)
+class InteractionEvent:
+    id: UUID
+    user_id: UUID
+    status: EventStatus
+    last_user_message_at: datetime | None
+    last_agent_message_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+    def __post_init__(self) -> None:
+        for value, label in (
+            (self.last_user_message_at, "Last user message"),
+            (self.last_agent_message_at, "Last agent message"),
+        ):
+            if value is not None:
+                _require_utc(value, label)
+        _require_utc(self.created_at, "Interaction event creation time")
+        _require_utc(self.updated_at, "Interaction event update time")
+
+    @property
+    def latest_contact_at(self) -> datetime | None:
+        contacts = [
+            value
+            for value in (self.last_user_message_at, self.last_agent_message_at)
+            if value is not None
+        ]
+        return max(contacts) if contacts else None
+
+
 def _require_utc(value: datetime, label: str) -> None:
     _require_aware(value, label)
     if value.utcoffset() != timedelta(0):

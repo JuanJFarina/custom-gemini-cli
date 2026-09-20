@@ -70,11 +70,16 @@ async def _process_turn(
         )
 
     if isinstance(admission, QuotaExceeded):
+        await runtime.interactions.record_user_message(
+            user_id=admission.user_id,
+            update_ids=turn.update_ids,
+        )
         await _send_notice(
             messenger=runtime.messenger,
             chat_id=turn.telegram_chat_id,
             text=(
-                f"You have {admission.remaining} requests remaining this month. "
+                f"You have {admission.remaining} requests remaining in this "
+                "subscription period. "
                 f"Your allowance resets at {_utc_boundary(admission.resets_at)}."
             ),
         )
@@ -87,6 +92,10 @@ async def _process_turn(
         raise RuntimeError("Unexpected preflight result.")
 
     try:
+        await runtime.interactions.record_user_message(
+            user_id=admission.resolved_user.user.id,
+            update_ids=turn.update_ids,
+        )
         user_runtime = await runtime.users.create_for_resolved_user(
             resolved_user=admission.resolved_user,
             telegram_chat_id=turn.telegram_chat_id,
@@ -194,6 +203,12 @@ async def _run_admitted_turn(
                 telegram_user_id=telegram_user_id,
                 retryable=False,
             )
+        try:
+            await runtime.interactions.record_agent_message(
+                user_id=user_runtime.resolved_user.user.id,
+            )
+        except (OSError, PostgresError, RuntimeError) as exc:
+            log.warning("Could not record assistant contact: %s", type(exc).__name__)
         return await runtime.messages.finish_delivered(
             telegram_user_id=telegram_user_id,
             update_ids=turn.update_ids,

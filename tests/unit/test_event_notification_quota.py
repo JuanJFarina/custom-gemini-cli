@@ -13,6 +13,7 @@ from harle_domain.accounts import (
     ExternalIdentity,
     Plan,
     ResolvedUser,
+    SubscriptionPeriod,
     SubscriptionStatus,
     User,
 )
@@ -25,14 +26,17 @@ from harle_domain.events import (
     EventStatus,
     EventTimestamps,
     EventType,
+    InteractionEvent,
     InternalEvent,
 )
 from harle_domain.messaging import OutboundMessenger
+from harle_domain.tools import HarleToolStore
 from harle_services.access import PreflightService
 from harle_services.events import (
     EventNotificationOutcome,
     EventNotificationQuotaService,
     EventNotificationService,
+    InteractionEventService,
     NotificationQuotaExceeded,
     NotificationQuotaReservation,
 )
@@ -40,6 +44,10 @@ from harle_services.runtime import UserRuntime, UserRuntimeFactory
 from harle_utils import MessageDeliveryError
 
 NOW = datetime(2026, 9, 17, 15, tzinfo=timezone.utc)
+PERIOD = SubscriptionPeriod(
+    datetime(2026, 9, 1, tzinfo=timezone.utc),
+    datetime(2026, 10, 1, tzinfo=timezone.utc),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,7 +144,9 @@ class FakeUsers:
         del resolved_user, telegram_chat_id
         return cast(
             UserRuntime,
-            SimpleNamespace(user_profile=SimpleNamespace(locale="en-US")),
+            SimpleNamespace(
+                user_profile=SimpleNamespace(locale="en-US", timezone="UTC"),
+            ),
         )
 
 
@@ -150,6 +160,23 @@ class FakeMessenger:
         if self.fails:
             raise MessageDeliveryError
         self.messages.append(text)
+
+
+class FakeInteractions:
+    def __init__(self) -> None:
+        self.agent_messages: list[UUID] = []
+
+    async def record_agent_message(self, *, user_id: UUID) -> object:
+        self.agent_messages.append(user_id)
+        return object()
+
+
+class FakeGeneratedHarle:
+    def __init__(self) -> None:
+        self.saved = False
+
+    async def save_scheduled(self, **_: object) -> None:
+        self.saved = True
 
 
 def _event(
@@ -198,6 +225,10 @@ def _resolved_user(user_id: UUID, *, limit: int) -> ResolvedUser:
             subscription_status=SubscriptionStatus.ACTIVE,
             subscription_valid_until=None,
             subscription_synced_at=NOW,
+            subscription_period=SubscriptionPeriod(
+                datetime(2026, 9, 1, tzinfo=timezone.utc),
+                datetime(2026, 10, 1, tzinfo=timezone.utc),
+            ),
             created_at=NOW,
             updated_at=NOW,
         ),
@@ -227,6 +258,8 @@ def _notification_service(
             cast(EventNotificationUsageRepository, usage),
             clock=lambda: NOW,
         ),
+        interactions=cast(InteractionEventService, FakeInteractions()),
+        tool_store_builder=lambda _user, _timezone: HarleToolStore(),
     )
 
 
@@ -245,14 +278,22 @@ def test_notification_quota_reserves_counts_and_blocks() -> None:
                 notify_before=timedelta(0),
             ),
             monthly_limit=1,
+            period=PERIOD,
         )
         assert isinstance(first, NotificationQuotaReservation)
-        assert (await service.status(user_id=user_id, monthly_limit=1)).remaining == 0
+        assert (
+            await service.status(
+                user_id=user_id,
+                monthly_limit=1,
+                period=PERIOD,
+            )
+        ).remaining == 0
         assert await service.complete(first)
 
         blocked = await service.reserve(
             event=_event(user_id, starts_at=NOW + timedelta(hours=2)),
             monthly_limit=1,
+            period=PERIOD,
         )
         assert isinstance(blocked, NotificationQuotaExceeded)
         assert await service.claim_exhaustion_notice(blocked)
@@ -297,7 +338,7 @@ def test_exhausted_quota_skips_gemini_and_sends_one_notice(
         assert await service.notify(event) is EventNotificationOutcome.QUOTA_EXCEEDED
         assert await service.notify(event) is EventNotificationOutcome.QUOTA_EXCEEDED
         assert len(messenger.messages) == 1
-        assert "monthly limit of 1" in messenger.messages[0]
+        assert "limit of 1" in messenger.messages[0]
 
     asyncio.run(verify())
 
@@ -326,7 +367,87 @@ def test_failed_delivery_releases_quota_without_consuming_it(
 
         assert not usage.deliveries
         assert (
-            await service.quotas.status(user_id=user_id, monthly_limit=1)
+            await service.quotas.status(
+                user_id=user_id,
+                monthly_limit=1,
+                period=PERIOD,
+            )
         ).remaining == 1
+
+    asyncio.run(verify())
+
+
+def test_successful_notification_persists_scheduled_message(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    async def verify() -> None:
+        user_id = uuid4()
+        usage = FakeUsageRepository()
+        messenger = FakeMessenger()
+        service = _notification_service(
+            _resolved_user(user_id, limit=1),
+            usage,
+            messenger,
+        )
+        harle = FakeGeneratedHarle()
+
+        async def generate(**_: object) -> object:
+            return SimpleNamespace(
+                harle=harle,
+                result=SimpleNamespace(response_text="Reminder"),
+            )
+
+        monkeypatch.setattr(notifications_module, "generate_response", generate)
+        outcome = await service.notify(
+            _event(user_id, starts_at=NOW + timedelta(hours=1)),
+        )
+
+        assert outcome is EventNotificationOutcome.DELIVERED
+        assert messenger.messages == ["Reminder"]
+        assert harle.saved
+        assert len(usage.deliveries) == 1
+        interactions = cast(FakeInteractions, service.interactions)
+        assert interactions.agent_messages == [user_id]
+
+    asyncio.run(verify())
+
+
+def test_interaction_notification_persists_without_quota(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    async def verify() -> None:
+        user_id = uuid4()
+        usage = FakeUsageRepository()
+        messenger = FakeMessenger()
+        service = _notification_service(
+            _resolved_user(user_id, limit=1),
+            usage,
+            messenger,
+        )
+        harle = FakeGeneratedHarle()
+
+        async def generate(**_: object) -> object:
+            return SimpleNamespace(
+                harle=harle,
+                result=SimpleNamespace(response_text="How are you?"),
+            )
+
+        monkeypatch.setattr(notifications_module, "generate_response", generate)
+        outcome = await service.notify_interaction(
+            InteractionEvent(
+                id=uuid4(),
+                user_id=user_id,
+                status=EventStatus.ACTIVE,
+                last_user_message_at=NOW,
+                last_agent_message_at=None,
+                created_at=NOW,
+                updated_at=NOW,
+            ),
+        )
+
+        assert outcome is EventNotificationOutcome.DELIVERED
+        assert messenger.messages == ["How are you?"]
+        assert harle.saved
+        assert not usage.deliveries
 
     asyncio.run(verify())

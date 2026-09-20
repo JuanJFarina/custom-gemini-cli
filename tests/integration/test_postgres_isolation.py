@@ -1,6 +1,6 @@
 import asyncio
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -12,16 +12,17 @@ from harle_infrastructure.postgres import (
     PostgresAssistantProfileRepository,
     PostgresConversationRepository,
     PostgresConversationStore,
+    PostgresInteractionEventRepository,
     PostgresUserProfileRepository,
     create_postgres_pool,
     validate_postgres_schema,
 )
-from harle_services.access import utc_month_period
 
 DATABASE_URL = os.environ.get("TEST_POSTGRES_DATABASE_URL")
 ROOT = Path(__file__).parents[2]
 SCHEMA_PATHS = (
     ROOT / "scripts" / "apply_multi_user_runtime.sql",
+    ROOT / "scripts" / "apply_subscription_interactions.sql",
     ROOT / "scripts" / "apply_internal_expenses.sql",
     ROOT / "scripts" / "apply_internal_events.sql",
     ROOT / "scripts" / "apply_event_notification_quotas.sql",
@@ -47,9 +48,15 @@ async def verify_isolation(database_url: str) -> None:
                 """
                 INSERT INTO users (
                     id, name, telegram_id, display_name, plan_code,
-                    subscription_status, subscription_synced_at
+                    subscription_status, subscription_synced_at,
+                    subscription_period_starts_at,
+                    subscription_period_ends_at
                 )
-                VALUES ($1, $2, $3, $2, 'free', 'active', NOW())
+                VALUES (
+                    $1, $2, $3, $2, 'free', 'active', NOW(),
+                    NOW() - INTERVAL '1 day',
+                    NOW() + INTERVAL '29 days'
+                )
                 """,
                 user_id,
                 name,
@@ -111,6 +118,33 @@ async def verify_isolation(database_url: str) -> None:
         assert first_scheduled_user.identity.external_user_id == str(
             first_telegram_id,
         )
+        interactions = PostgresInteractionEventRepository(pool)
+        interaction = await interactions.get_for_user(user_id=first_id)
+        assert interaction is not None
+        async with pool.acquire() as connection:
+            await connection.execute(
+                """
+                INSERT INTO telegram_update_claims (
+                    update_id, telegram_user_id, telegram_chat_id, message_text
+                )
+                VALUES ($1, $2, 10, 'hello')
+                """,
+                first_telegram_id,
+                first_telegram_id,
+            )
+        interaction = await interactions.record_user_message(
+            user_id=first_id,
+            update_ids=(first_telegram_id,),
+        )
+        assert interaction is not None
+        assert interaction.last_user_message_at is not None
+        agent_time = datetime.now(timezone.utc) + timedelta(seconds=1)
+        interaction = await interactions.record_agent_message(
+            user_id=first_id,
+            occurred_at=agent_time,
+        )
+        assert interaction is not None
+        assert interaction.last_agent_message_at == agent_time
 
         user_profiles = PostgresUserProfileRepository(pool)
         assistant_profiles = PostgresAssistantProfileRepository(pool)
@@ -130,9 +164,14 @@ async def verify_isolation(database_url: str) -> None:
             response_text="two",
             model="fake",
         )
+        await first_store.save_scheduled(
+            response_text="scheduled hello",
+            model="fake",
+        )
         first_context = await first_store.load()
         second_context = await second_store.load()
         assert "first prompt" in first_context and "second prompt" not in first_context
+        assert '"assistant_message": "scheduled hello"' in first_context
         assert (
             "second prompt" in second_context and "first prompt" not in second_context
         )
@@ -149,16 +188,17 @@ async def verify_isolation(database_url: str) -> None:
                 """,
                 first_id,
             )
-        period = utc_month_period(datetime.now(timezone.utc))
+        assert first_user is not None
+        period = first_user.user.require_subscription_period()
         first_usage = await conversations.count_completed_conversations(
             user_id=first_id,
             created_from=period.starts_at,
-            created_before=period.resets_at,
+            created_before=period.ends_at,
         )
         second_usage = await conversations.count_completed_conversations(
             user_id=second_id,
             created_from=period.starts_at,
-            created_before=period.resets_at,
+            created_before=period.ends_at,
         )
         assert first_usage == 1
         assert second_usage == 1
@@ -166,6 +206,10 @@ async def verify_isolation(database_url: str) -> None:
         await pool.close()
         cleanup = await asyncpg.connect(database_url)
         try:
+            await cleanup.execute(
+                "DELETE FROM telegram_update_claims WHERE update_id = $1",
+                first_telegram_id,
+            )
             await cleanup.execute(
                 "DELETE FROM users WHERE id = ANY($1::uuid[])",
                 [first_id, second_id],

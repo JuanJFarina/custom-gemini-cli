@@ -1,11 +1,13 @@
 from asyncio import CancelledError, Lock, Task, create_task, sleep
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 from asyncpg import PostgresError
 
 from harle_utils import MessageDeliveryError, log
 
+from .interactions import InteractionEventService
 from .notifications import EventNotificationOutcome, EventNotificationService
 from .service import EventService
 
@@ -22,6 +24,7 @@ SCHEDULER_FAILURES = (
 @dataclass(slots=True)
 class AgentsScheduler:
     events: EventService
+    interactions: InteractionEventService
     notifications: EventNotificationService
     interval_seconds: float = 300
     sleeper: Callable[[float], Awaitable[None]] = sleep
@@ -59,6 +62,7 @@ class AgentsScheduler:
     async def run_once(self) -> int:
         async with self._run_lock:
             due_events = await self.events.list_due_for_notification()
+            users_with_due_events = {event.user_id for event in due_events}
             delivered_count = 0
             for event in due_events:
                 try:
@@ -80,6 +84,28 @@ class AgentsScheduler:
                     log.warning(
                         "Event notification failed for %s: %s",
                         event.id,
+                        type(exc).__name__,
+                    )
+            interaction_events = await self.interactions.list_active()
+            scheduler_interval = timedelta(seconds=self.interval_seconds)
+            for interaction_event in interaction_events:
+                if interaction_event.user_id in users_with_due_events:
+                    continue
+                if not self.interactions.should_trigger(
+                    interaction_event,
+                    scheduler_interval=scheduler_interval,
+                ):
+                    continue
+                try:
+                    outcome = await self.notifications.notify_interaction(
+                        interaction_event,
+                    )
+                    if outcome is EventNotificationOutcome.DELIVERED:
+                        delivered_count += 1
+                except SCHEDULER_FAILURES as exc:
+                    log.warning(
+                        "Interaction event failed for %s: %s",
+                        interaction_event.id,
                         type(exc).__name__,
                     )
             return delivered_count

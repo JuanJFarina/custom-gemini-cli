@@ -2,13 +2,14 @@ from asyncio import Lock
 from collections import deque
 from collections.abc import MutableMapping, MutableSet, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import TypeAlias
 from uuid import UUID, uuid4
 
 from harle_domain.accounts import (
     AccountRepository,
     ResolvedUser,
+    SubscriptionPeriod,
     SubscriptionStatus,
 )
 from harle_domain.conversations.ports import ConversationUsageRepository
@@ -31,12 +32,6 @@ BAN_COOLDOWNS: Sequence[timedelta] = (
 
 
 @dataclass(frozen=True, slots=True)
-class UtcMonthPeriod:
-    starts_at: datetime
-    resets_at: datetime
-
-
-@dataclass(frozen=True, slots=True)
 class QuotaReservation:
     id: UUID
     user_id: UUID
@@ -46,6 +41,7 @@ class QuotaReservation:
 
 @dataclass(frozen=True, slots=True)
 class QuotaExceeded:
+    user_id: UUID
     remaining: int
     resets_at: datetime
 
@@ -90,6 +86,7 @@ class PreflightService:
         quota = await self._reserve_quota(
             user_id=resolved_user.user.id,
             monthly_request_limit=resolved_user.plan.monthly_request_limit,
+            period=resolved_user.user.require_subscription_period(),
         )
         if isinstance(quota, QuotaExceeded):
             return quota
@@ -154,22 +151,26 @@ class PreflightService:
         *,
         user_id: UUID,
         monthly_request_limit: int,
+        period: SubscriptionPeriod,
     ) -> QuotaReservation | QuotaExceeded:
         if monthly_request_limit <= 0:
             raise ValueError("Monthly request limit must be positive.")
 
-        period = utc_month_period(self._clock())
         async with self._quota_lock(user_id):
             completed = await self._conversations.count_completed_conversations(
                 user_id=user_id,
                 created_from=period.starts_at,
-                created_before=period.resets_at,
+                created_before=period.ends_at,
             )
             reservations = self._reservations.get(user_id)
             in_flight = len(reservations) if reservations is not None else 0
             available = monthly_request_limit - completed - in_flight
             if available <= 0:
-                return QuotaExceeded(remaining=0, resets_at=period.resets_at)
+                return QuotaExceeded(
+                    user_id=user_id,
+                    remaining=0,
+                    resets_at=period.ends_at,
+                )
 
             reservation_id = uuid4()
             if reservations is None:
@@ -180,7 +181,7 @@ class PreflightService:
                 id=reservation_id,
                 user_id=user_id,
                 remaining=available - 1,
-                resets_at=period.resets_at,
+                resets_at=period.ends_at,
             )
 
     def _quota_lock(self, user_id: UUID) -> Lock:
@@ -203,10 +204,16 @@ def _require_active_subscription(
     user = resolved_user.user
     valid_until = user.subscription_valid_until
     is_expired = valid_until is not None and valid_until <= current_time
+    try:
+        period = user.require_subscription_period()
+    except ValueError as exc:
+        raise InactiveSubscriptionError from exc
+    is_outside_period = not period.starts_at <= current_time < period.ends_at
     if (
         not resolved_user.plan.active
         or user.subscription_status is not SubscriptionStatus.ACTIVE
         or is_expired
+        or is_outside_period
     ):
         raise InactiveSubscriptionError
 
@@ -224,24 +231,3 @@ def _decay_strikes(state: _IdentityRateLimit, now: datetime) -> None:
         state.decay_anchor = None
         return
     state.decay_anchor += STRIKE_DECAY_INTERVAL * elapsed_intervals
-
-
-def utc_month_period(value: datetime) -> UtcMonthPeriod:
-    current = as_utc(value)
-    starts_at = current.replace(
-        day=1,
-        hour=0,
-        minute=0,
-        second=0,
-        microsecond=0,
-    )
-    if starts_at.month == 12:
-        resets_at = datetime(starts_at.year + 1, 1, 1, tzinfo=timezone.utc)
-    else:
-        resets_at = datetime(
-            starts_at.year,
-            starts_at.month + 1,
-            1,
-            tzinfo=timezone.utc,
-        )
-    return UtcMonthPeriod(starts_at=starts_at, resets_at=resets_at)

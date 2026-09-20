@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from harle_domain.accounts import SubscriptionPeriod
 from harle_domain.messaging import MediaContent
 from harle_utils import ToolUnavailableError
 
@@ -87,11 +88,25 @@ class ToolDefinition:
 
 
 @dataclass(frozen=True, slots=True)
+class NotificationAllowance:
+    limit: int = 0
+    period: SubscriptionPeriod | None = None
+
+    def __post_init__(self) -> None:
+        if self.limit < 0:
+            raise ValueError("Notification allowance cannot be negative.")
+        if (self.limit == 0) != (self.period is None):
+            raise ValueError(
+                "Positive notification allowance requires a subscription period.",
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class ToolExecutionContext:
     user_id: UUID
     timezone: str
     authorized_families: frozenset[ToolFamily]
-    monthly_notification_limit: int = 0
+    notification_allowance: NotificationAllowance = NotificationAllowance()
 
     def __post_init__(self) -> None:
         try:
@@ -102,6 +117,14 @@ class ToolExecutionContext:
     def require_family(self, family: ToolFamily) -> None:
         if family not in self.authorized_families:
             raise ToolUnavailableError("This tool is unavailable.")
+
+    @property
+    def monthly_notification_limit(self) -> int:
+        return self.notification_allowance.limit
+
+    @property
+    def subscription_period(self) -> SubscriptionPeriod | None:
+        return self.notification_allowance.period
 
 
 ToolHandler = Callable[[BaseModel], Awaitable[ToolCallResult]]
