@@ -178,13 +178,16 @@ def _notification_prompt(event: InternalEvent) -> str:
 
 
 def _interaction_prompt() -> str:
-    return (
-        "This is an automatic interaction wake-up, not a new user message. "
-        "Based on the user's conversation history and available current context, "
-        "choose one natural and useful thing to say or ask. You may use available "
-        "read-only tools when useful. Write only a brief Telegram message in the "
-        "user's language. Do not mention this wake-up or claim the user just wrote."
-    )
+    return """This is an automatic system-triggered interaction event. The user hasn't sent you a new message.
+This is your chance to send them a proactive message, like:
+- Ask how they're doing or what they're up to (be mindful of the user's current time and day).
+- Remind them of something they've mentioned before.
+- If you know they're currently doing something, ask something related to it.
+- Follow up on a previous conversation topic.
+- Search the internet for some news that could be interesting to the user.
+- Call any read-only tools you have that could give you something useful to tell the user.
+Do not mention this wake-up or claim the user just wrote. Use the user's language (argentinian spanish most likely). This should be a natural and useful message to the user, and should feel as if you care about them and just remembered to send them a message.
+"""
 
 
 def _telegram_chat_id(external_user_id: str) -> int:

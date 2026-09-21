@@ -56,7 +56,7 @@ class AgentsScheduler:
             try:
                 await self.run_once()
             except SCHEDULER_FAILURES as exc:
-                log.warning("Event scheduler pass failed: %s", type(exc).__name__)
+                log.warning(f"Event scheduler pass failed: {type(exc).__name__}")
             await self.sleeper(self.interval_seconds)
 
     async def run_once(self) -> int:
@@ -66,6 +66,10 @@ class AgentsScheduler:
             delivered_count = 0
             for event in due_events:
                 try:
+                    log.info(
+                        f"Scheduled event triggered event_id={event.id} user_id={event.user_id} "
+                        f"event_type={event.event_type.value}",
+                    )
                     outcome = await self.notifications.notify(event)
                     if outcome not in {
                         EventNotificationOutcome.DELIVERED,
@@ -82,9 +86,7 @@ class AgentsScheduler:
                         delivered_count += 1
                 except SCHEDULER_FAILURES as exc:
                     log.warning(
-                        "Event notification failed for %s: %s",
-                        event.id,
-                        type(exc).__name__,
+                        f"Event notification failed for event_id={event.id}: {type(exc).__name__}"
                     )
             interaction_events = await self.interactions.list_active()
             scheduler_interval = timedelta(seconds=self.interval_seconds)
@@ -97,6 +99,10 @@ class AgentsScheduler:
                 ):
                     continue
                 try:
+                    log.info(
+                        f"Scheduled event triggered event_id={interaction_event.id} user_id={interaction_event.user_id} "
+                        f"event_type=interaction_event",
+                    )
                     outcome = await self.notifications.notify_interaction(
                         interaction_event,
                     )
@@ -104,8 +110,6 @@ class AgentsScheduler:
                         delivered_count += 1
                 except SCHEDULER_FAILURES as exc:
                     log.warning(
-                        "Interaction event failed for %s: %s",
-                        interaction_event.id,
-                        type(exc).__name__,
+                        f"Interaction event failed for event_id={interaction_event.id}: {type(exc).__name__}",
                     )
             return delivered_count

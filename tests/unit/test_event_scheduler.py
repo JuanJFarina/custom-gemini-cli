@@ -1,9 +1,12 @@
 import asyncio
+import logging
 from types import SimpleNamespace
 from typing import cast
 from uuid import UUID, uuid4
 
-from harle_domain.events import InteractionEvent, InternalEvent
+from pytest import LogCaptureFixture
+
+from harle_domain.events import EventType, InteractionEvent, InternalEvent
 from harle_services.events import (
     AgentsScheduler,
     EventNotificationOutcome,
@@ -70,11 +73,19 @@ def test_scheduler_marks_success_and_retries_failed_delivery() -> None:
         user_id = uuid4()
         first = cast(
             InternalEvent,
-            SimpleNamespace(id=uuid4(), user_id=user_id),
+            SimpleNamespace(
+                id=uuid4(),
+                user_id=user_id,
+                event_type=EventType.USER_EVENT,
+            ),
         )
         second = cast(
             InternalEvent,
-            SimpleNamespace(id=uuid4(), user_id=user_id),
+            SimpleNamespace(
+                id=uuid4(),
+                user_id=user_id,
+                event_type=EventType.SYSTEM_EVENT,
+            ),
         )
         events = FakeEvents([first, second])
         notifications = FakeNotifications(
@@ -106,7 +117,11 @@ def test_scheduler_suppresses_interaction_only_for_user_with_due_event() -> None
         available_user_id = uuid4()
         due = cast(
             InternalEvent,
-            SimpleNamespace(id=uuid4(), user_id=due_user_id),
+            SimpleNamespace(
+                id=uuid4(),
+                user_id=due_user_id,
+                event_type=EventType.USER_EVENT,
+            ),
         )
         suppressed = cast(
             InteractionEvent,
@@ -127,5 +142,46 @@ def test_scheduler_suppresses_interaction_only_for_user_with_due_event() -> None
         assert await scheduler.run_once() == 1
         assert interactions.checked == [available.id]
         assert notifications.interaction_attempts == [available.id]
+
+    asyncio.run(verify())
+
+
+def test_scheduler_logs_triggered_event_types(
+    caplog: LogCaptureFixture,
+) -> None:
+    async def verify() -> None:
+        ordinary_user_id = uuid4()
+        interaction_user_id = uuid4()
+        ordinary = cast(
+            InternalEvent,
+            SimpleNamespace(
+                id=uuid4(),
+                user_id=ordinary_user_id,
+                event_type=EventType.SYSTEM_EVENT,
+            ),
+        )
+        interaction = cast(
+            InteractionEvent,
+            SimpleNamespace(id=uuid4(), user_id=interaction_user_id),
+        )
+        scheduler = AgentsScheduler(
+            events=cast(EventService, FakeEvents([ordinary])),
+            interactions=cast(
+                InteractionEventService,
+                FakeInteractions([interaction]),
+            ),
+            notifications=cast(
+                EventNotificationService,
+                FakeNotifications([EventNotificationOutcome.DELIVERED]),
+            ),
+        )
+
+        with caplog.at_level(logging.INFO, logger="harle"):
+            assert await scheduler.run_once() == 2
+
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("event_type=system_event" in message for message in messages)
+        assert any("event_type=interaction_event" in message for message in messages)
+        assert sum("Scheduled event triggered" in message for message in messages) == 2
 
     asyncio.run(verify())
