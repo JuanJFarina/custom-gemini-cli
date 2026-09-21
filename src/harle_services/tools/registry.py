@@ -5,6 +5,7 @@ from uuid import UUID
 from harle_domain.tools import (
     HarleTool,
     HarleToolStore,
+    NotificationAllowance,
     ToolDefinition,
     ToolExecutionContext,
     ToolFamily,
@@ -16,6 +17,7 @@ ToolHandlerFactory = Callable[
     [ToolExecutionContext],
     Mapping[str, ToolHandler],
 ]
+NO_NOTIFICATION_ALLOWANCE = NotificationAllowance()
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,7 +56,7 @@ class ToolRegistry:
         user_id: UUID,
         timezone: str,
         authorized_families: frozenset[ToolFamily],
-        monthly_notification_limit: int = 0,
+        notification_allowance: NotificationAllowance = NO_NOTIFICATION_ALLOWANCE,
     ) -> HarleToolStore:
         unavailable = authorized_families - self.families
         if unavailable:
@@ -64,7 +66,7 @@ class ToolRegistry:
             user_id=user_id,
             timezone=timezone,
             authorized_families=authorized_families,
-            monthly_notification_limit=monthly_notification_limit,
+            notification_allowance=notification_allowance,
         )
         tools: list[HarleTool] = []
         instructions: list[str] = []

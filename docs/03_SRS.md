@@ -36,8 +36,8 @@ This document distinguishes the implemented controlled-beta baseline from target
 - Supported Telegram images, voice notes, and audio files are sent directly to Gemini. The ten newest user-owned Telegram references remain available through a read-only tool for twelve hours on a best-effort process-local basis.
 - Telegram updates are persisted and deduplicated before assistant execution. Consecutive messages may join a turn until tool execution or delivery begins.
 - The tenth valid message within two seconds triggers a per-identity cooldown. Cooldowns escalate from 60 seconds to 5 minutes and then 1 hour, and strikes decay after normal use.
-- Monthly quotas count successful completed conversations within UTC month boundaries and include process-local in-flight reservations. Configured plan limits, rather than application constants, determine allowance.
-- Runtime authorization for inferred writes, action audits, durable work queues, automated subscription synchronization, privacy workflows, event-notification quotas and delivery records, notification preferences, proactive behavior, and multi-user Google integrations remain pending.
+- Manually provisioned exact subscription-period boundaries define conversation and event-notification allowances. Completed conversations and successful ordinary event deliveries use separate configured plan limits with process-local in-flight reservations.
+- Runtime authorization for inferred writes, action audits, durable work queues, automated external subscription synchronization, privacy workflows, and multi-user Google integrations remain pending.
 
 ## User Requirements
 
@@ -53,12 +53,12 @@ This document distinguishes the implemented controlled-beta baseline from target
 - **UR-10 Personal finance**: Harle shall help users query, add, correct, and understand personal finance data through natural conversation.
 - **UR-11 Productivity support**: Harle shall provide private internal events, simple weekly or monthly recurrence, and process-local Telegram notifications, and may later add durable delivery or external calendar integration.
 - **UR-12 Companionship**: Harle shall help users feel better, reflect, stay organized, and improve their lives while respecting healthy relationship boundaries.
-- **UR-13 Proactive support**: The target product shall be able to follow up, remind, or check in when the user has enabled that behavior, the follow-up is useful, and the action respects the user's notification preferences.
+- **UR-13 Proactive support**: The target product shall provide one user-controlled interaction event per account so Harle can occasionally initiate a conversation after ordinary event work, with bounded probability and inactivity behavior.
 - **UR-14 Privacy and safety**: Harle shall protect user data, minimize unnecessary exposure, and make safety a core product behavior.
 - **UR-15 Transparency**: Harle shall not hide that it is AI or simulate human identity in manipulative ways.
 - **UR-16 Reliability**: Harle shall report failures clearly when it cannot answer or complete a requested action.
 - **UR-17 Efficiency**: Harle shall pursue fast and inexpensive responses suitable for frequent daily use.
-- **UR-18 Event notification allowance**: Each plan shall provide a separate, visible monthly allowance for successful event notifications without consuming conversation quota.
+- **UR-18 Event notification allowance**: Each plan shall provide a separate, visible allowance for successful event notifications during the user's synchronized subscription period without consuming conversation quota.
 
 ## System Specification
 
@@ -92,10 +92,10 @@ This document distinguishes the implemented controlled-beta baseline from target
 - **FR-71**: Conflicting work for one Telegram identity shall be serialized without blocking other identities. Process-local coordination is permitted while deployment remains one process.
 - **FR-72**: Every newly persisted valid update shall count independently toward a rolling safety window, even when messages later join one turn.
 - **FR-73**: The tenth valid update within two seconds shall trigger a ban for only that Telegram identity. Cooldowns shall escalate from at least 60 seconds to 5 minutes and then 1 hour, strikes shall decay after normal use, and Harle shall send at most one notice per cooldown.
-- **FR-74**: Duplicate, malformed, temporarily banned, unauthorized, inactive, and operationally rejected updates shall not invoke Gemini or consume monthly quota.
-- **FR-75**: Monthly usage shall count only successful rows where `kind = 'conversation'` and `status = 'completed'`, using explicit inclusive-start and exclusive-end UTC month boundaries.
+- **FR-74**: Duplicate, malformed, temporarily banned, unauthorized, inactive, and operationally rejected updates shall not invoke Gemini or consume subscription-period conversation quota.
+- **FR-75**: Usage shall count only successful rows where `kind = 'conversation'` and `status = 'completed'`, using the user's synchronized subscription-period start as the inclusive boundary and period end as the exclusive boundary.
 - **FR-76**: Quota admission shall include process-local in-flight reservations, release reservations on every outcome, and exclude tool calls, retries, failed conversations, and individual messages aggregated into one conversation.
-- **FR-77**: An over-quota response shall expose the remaining allowance and exact reset boundary without invoking Gemini.
+- **FR-77**: An over-quota response shall expose the remaining allowance and exact synchronized subscription-period end without invoking Gemini.
 - **FR-78**: Plan limits shall come from account or plan configuration. The provisional free, basic, and max limits are 60, 480, and 1,920 monthly conversations.
 - **FR-79**: Conversation and tool-interaction persistence shall use stable update-derived identifiers where required to prevent duplicate records.
 
@@ -166,14 +166,29 @@ This document distinguishes the implemented controlled-beta baseline from target
 
 ### Event Notification Quotas
 
-- **FR-101**: Every plan shall configure a positive monthly event-notification limit separate from its monthly conversation limit. The provisional free, basic, and max limits shall be 15, 60, and 240 notifications.
-- **FR-102**: Event-notification quota periods shall use inclusive-start and exclusive-end UTC month boundaries. Both `user_event` and `system_event` notifications shall use the same allowance.
+- **FR-101**: Every plan shall configure a positive event-notification limit per synchronized subscription period, separate from its conversation limit. The provisional free, basic, and max limits shall be 15, 60, and 240 notifications.
+- **FR-102**: Event-notification quota periods shall use each user's exact synchronized `subscription_period_starts_at` inclusive boundary and `subscription_period_ends_at` exclusive boundary. Both `user_event` and `system_event` notifications shall use the same allowance.
 - **FR-103**: Quota usage shall count each successfully delivered Telegram event notification once. Failed generation, failed delivery, safe retries, blocked occurrences, and quota-exhausted notices shall not count.
 - **FR-104**: The scheduler shall reserve event-notification allowance before invoking Gemini. Admission shall include successful deliveries and in-flight reservations so concurrent work cannot exceed the configured plan limit.
 - **FR-105**: A quota-blocked occurrence shall not invoke Gemini and shall not update the event's `last_notified_at`. It may be reconsidered while its start remains in the future and shall otherwise expire under the ordinary event-notification policy.
-- **FR-106**: On the first blocked occurrence for one user in a UTC month, Harle shall send at most one static quota-exhausted Telegram notice without invoking Gemini or consuming either quota. The notice shall identify the plan limit and exact reset boundary.
-- **FR-107**: Relevant event-management responses shall make the notification limit, remaining successful deliveries, and exact reset boundary available to the user.
+- **FR-106**: On the first blocked occurrence for one user in a subscription period, Harle shall send at most one static quota-exhausted Telegram notice without invoking Gemini or consuming either quota. The notice shall identify the plan limit and synchronized period end.
+- **FR-107**: Relevant event-management responses shall make the notification limit, remaining successful deliveries, and synchronized subscription-period end available to the user.
 - **FR-108**: Successful notification deliveries shall be recorded in a user-owned ledger with the event reference, computed occurrence start, notification window, and delivery time. Event deletion shall not restore consumed allowance, and account deletion shall handle these records under the product's deletion policy.
+
+### Subscription Periods and Scheduled Interaction
+
+- **FR-109**: The external registration and payment product shall synchronize each user's exact current `subscription_period_starts_at` and `subscription_period_ends_at` as timezone-aware UTC instants. The start shall precede the end.
+- **FR-110**: Conversation and event-notification allowance calculations shall use the synchronized current period without deriving boundaries from account creation, an original subscription date, or UTC calendar months. `subscription_valid_until` shall remain a separate access-expiration field.
+- **FR-111**: Every successfully delivered `user_event`, `system_event`, or `interaction_event` message shall be persisted in conversation history as a standalone assistant message. Persistence shall not fabricate a user prompt, imply that a user response exists, or make the row count toward conversation quota. Read-only tool interactions used by the scheduled run shall use the existing tool-interaction history contract.
+- **FR-112**: Every user shall own exactly one internal `interaction_event`. It shall have no fixed start, end, notification window, recurrence rule, or materialized occurrence because its eligibility is calculated from contact activity on every scheduler pass.
+- **FR-113**: An interaction event shall support only active and disabled states. The user may disable and re-enable it, but neither user tools nor ordinary event deletion shall delete it.
+- **FR-114**: On each scheduler pass, Harle shall process due `user_event` and `system_event` occurrences first. A due ordinary occurrence shall suppress only the same user's interaction-event evaluation for that pass, whether or not generation or delivery succeeds; it shall not suppress other users.
+- **FR-115**: For an eligible interaction event, let `t` be the elapsed duration since the user's latest contact and `Δ` the scheduler interval. The next-pass trigger probability shall be `1 - exp(-(((t + Δ) / 96 hours)^2 - (t / 96 hours)^2))`. This shape-2, 96-hour-scale Weibull policy shall remain invariant when the scheduler interval changes.
+- **FR-116**: Latest contact shall be the later of the latest actual user message and any successfully delivered assistant message, including a normal conversation response, ordinary event notification, or interaction-event message. Every successful assistant delivery shall reset the probability clock.
+- **FR-117**: Harle shall not trigger an interaction event when the latest actual user message is more than seven days old. The event shall remain active and automatically become eligible again after a new user message.
+- **FR-118**: An interaction-event run shall load user and assistant profiles, conversation history, current time, current weather, Google Search grounding, and all authorized tools whose declared effect is read-only. Modifying tools shall be absent from the runtime tool store rather than prohibited only by prompting.
+- **FR-119**: Interaction events shall have no quiet period, shall not wait for or require a user response, and shall consume neither conversation nor event-notification allowance. A delivered interaction message shall simply reset the probability clock before it begins growing again.
+- **FR-120**: The interaction-event delivery and its standalone conversation-history entry shall be recorded only after successful Telegram delivery. Failed generation or delivery shall not reset contact time.
 
 ### Companionship and Safety
 
@@ -182,13 +197,13 @@ This document distinguishes the implemented controlled-beta baseline from target
 - **FR-51**: Harle shall not claim to be a human, doctor, psychologist, therapist, lawyer, financial advisor, or other professional authority.
 - **FR-52**: Harle shall encourage appropriate human or professional help when user needs exceed the assistant's role.
 - **FR-53**: Harle shall avoid manipulative behavior, dependency-building patterns, and advice that reduces user agency.
-- **FR-54**: Harle shall allow proactive check-ins only when they are user-enabled, useful, and bounded by notification preferences.
+- **FR-54**: Harle shall initiate proactive check-ins only through an active user-owned interaction event and according to FR-112 through FR-120.
 
 ### Runtime Architecture
 
-- **FR-55**: The controlled-beta runtime shall support request-triggered Telegram runs and process-local scheduled event-notification runs. General scheduled background work remains a later capability.
-- **FR-56**: A future agent scheduler shall select eligible users or agents for proactive checks, respecting opt-in settings, quiet periods, rate limits, and bounded prioritization rules.
-- **FR-57**: A scheduled event-notification run shall load the owning user's conversations, profiles, and relevant external context without exposing modifying tools or consuming conversation quota. Once the separate event-notification quota is implemented, it shall reserve that allowance before Gemini. Future general scheduled runs may load additional authorized context and tools under the target authorization policy.
+- **FR-55**: The controlled-beta runtime shall support request-triggered Telegram runs and process-local scheduled ordinary and interaction-event runs under FR-112 through FR-120.
+- **FR-56**: The scheduler shall select interaction events per user only after ordinary event work, using the event's active state, the seven-day user-inactivity cutoff, latest contact, and bounded probability rule. Interaction events require no quiet-period evaluation.
+- **FR-57**: A scheduled run shall load the owning user's conversations, profiles, and relevant external context without consuming conversation quota. Its runtime tool store shall contain all authorized read-only tools and no modifying tools. Ordinary event notifications shall reserve event-notification allowance before Gemini; interaction events shall not reserve either allowance.
 - **FR-58**: The target broad-release runtime shall use durable background queues for accepted inbound work and outbound delivery. Future scheduler work, proposed actions, and integration polling shall also use durable queues when work must survive interruptions.
 - **FR-59**: The runtime shall construct user-scoped stores and tool configuration from the resolved internal user account. Only Juan's UUID-gated legacy Google Sheets compatibility path may use integration settings from process configuration.
 - **FR-60**: Stores that require external connections shall use process-wide connection pools where appropriate while preserving per-user data boundaries in store adapters.
@@ -230,9 +245,9 @@ Harle is conceptually divided into these program areas:
 - **Expense and event stores**: Persist user-owned internal expenses, typed events, notification windows, recurrence definitions, and successful-notification timestamps.
 - **Context providers**: Provide current date, time, and weather from user-specific timezone and location inputs.
 - **Tool system**: Defines tool families, effects, argument contracts, authorization, prompt relevance, request-scoped handlers, and structured results.
-- **Preflight services**: Resolve identity and subscription, apply temporary bans, and reserve monthly quota before assistant execution.
-- **Event scheduler**: Selects eligible events every five minutes, wakes the owning active user's agent, sends Telegram notifications, and records successful delivery.
-- **Event-notification quota service**: Resolves plan allowance, reserves capacity before generation, records successful occurrence deliveries, and suppresses repeated quota notices.
+- **Preflight services**: Resolve identity, subscription, and exact synchronized subscription-period boundaries, apply temporary bans, and reserve conversation quota before assistant execution.
+- **Event scheduler**: Processes ordinary due events every five minutes, then independently evaluates interaction events for users without ordinary due work, wakes the owning active user's agent, sends Telegram messages, and records successful delivery.
+- **Event-notification quota service**: Resolves plan allowance for the user's synchronized subscription period, reserves capacity before ordinary event generation, records successful occurrence deliveries, and suppresses repeated quota notices.
 - **Future runtime services**: Proposed-action, audit, durable delivery, privacy, subscription-synchronization, and Google import services remain pending.
 - **External integrations**: Connects to AI providers, Telegram, PostgreSQL, Google Sheets, future productivity services, weather data, and external account or subscription systems.
 
@@ -253,18 +268,23 @@ The implemented scheduled-event flow is:
 
 1. `AgentsScheduler` runs every five minutes.
 2. It selects active one-time events with an open notification window and active recurring definitions that may produce a due occurrence.
-3. The runtime resolves the owning active user's Telegram identity and builds the user's request-scoped stores and context providers.
-4. Harle receives each event as agenda context for a user event or scheduled task context for a system event.
-5. Harle generates a concise notification without modifying tools or a conversation-quota reservation.
-6. Harle sends the notification to the user's private Telegram chat.
-7. Successful delivery updates `last_notified_at`. Failed delivery remains eligible until the occurrence ends.
+3. The runtime resolves the owning active user's Telegram identity, exact subscription period, separate notification allowance, stores, and context providers.
+4. It reserves notification capacity before Gemini. A blocked occurrence does not reach Gemini or update `last_notified_at`, and at most one static quota notice is sent for the user and period.
+5. Harle receives each event as agenda or scheduled-task context together with profiles, conversation history, current context, Google Search grounding, and every authorized read-only tool. Modifying tools are absent.
+6. Harle sends the notification to the user's private Telegram chat, persists it and any read-only tool interactions without a fabricated prompt, records successful quota usage and assistant contact, and updates `last_notified_at`.
+7. Failed generation, delivery, or scheduled-message persistence consumes no allowance and remains eligible under the ordinary notification window policy.
 
-The target event-notification quota extends this flow:
+This scheduler entrypoint is not a synthetic inbound user request. It bypasses Telegram intake, aggregation, deduplication, request rate limiting, and conversation-quota admission while reusing the core agent and user-scoped runtime.
 
-1. After resolving the active user, Harle loads the plan's separate notification allowance.
-2. It reserves capacity against successful deliveries and in-flight notification work for the current UTC month.
-3. An admitted occurrence reaches Gemini and consumes allowance only after successful Telegram delivery.
-4. A blocked occurrence does not reach Gemini or update `last_notified_at`. Harle sends at most one static quota notice for that user and month.
+The implemented interaction-event flow is:
+
+1. After ordinary due-event candidates are selected, the scheduler identifies users with no due `user_event` or `system_event` in the current pass.
+2. For each such user, it loads the single interaction event and continues only when the event and subscription are active.
+3. It stops when the user's latest actual message is more than seven days old.
+4. It computes elapsed time from the later of the latest user message and latest successfully delivered assistant message, then applies the shape-2, 96-hour Weibull probability for the current scheduler interval.
+5. A selected run receives profiles, conversation history, current context, Google Search, and authorized read-only tools, with modifying tools absent.
+6. Harle sends a natural proactive message without reserving conversation or event-notification allowance and without waiting for a reply.
+7. Successful delivery persists one standalone assistant message and resets the probability clock. Failure changes neither message history nor contact time.
 
 The implemented recurring-event flow is:
 
@@ -318,7 +338,7 @@ Open requirements that need product discovery:
 - Exact privacy and legal requirements for storing conversations, profiles, personal history, and finance data.
 - Final conversation and event-notification plan limits, free trials, allowance carry-over, failed payments, and cancellation behavior.
 - Telegram authorization UX for approving, cancelling, and expiring proposed modifications.
-- Durable notification delivery, quiet periods, and external calendar integration beyond the process-local event capability.
+- Durable notification delivery, optional quiet periods for ordinary event notifications, and external calendar integration beyond the process-local event capability.
 - The exact long-term Telegram media MIME allowlist beyond the voice-note-first controlled beta.
 - Data retention, deletion, export, and backup policies.
 - Concrete latency, cost, and reliability targets for paid launch.
@@ -345,6 +365,7 @@ flowchart LR
         ConversationStore["ConversationStore"]
         UserPersonaStore["UserPersonaStore"]
         AssistantPersonaStore["AssistantPersonaStore"]
+        InteractionEventStore["Interaction Event Store"]
         RemindersStore["RemindersStore"]
         ProposedActionStore["ProposedActionStore"]
         ContextInjectors["Context Injectors"]
@@ -383,6 +404,7 @@ flowchart LR
     Agent --> ConversationStore
     Agent --> UserPersonaStore
     Agent --> AssistantPersonaStore
+    Agent --> InteractionEventStore
     Agent --> RemindersStore
     Agent --> ProposedActionStore
     Agent --> ContextInjectors
@@ -392,6 +414,7 @@ flowchart LR
     ConversationStore --> Postgres
     UserPersonaStore --> Postgres
     AssistantPersonaStore --> Postgres
+    InteractionEventStore --> Postgres
     RemindersStore --> Postgres
     ProposedActionStore --> Postgres
     AgentScheduler --> BackgroundQueues

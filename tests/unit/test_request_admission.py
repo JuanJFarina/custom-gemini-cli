@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
@@ -10,6 +11,7 @@ from harle_domain.accounts import (
     ExternalIdentity,
     Plan,
     ResolvedUser,
+    SubscriptionPeriod,
     SubscriptionStatus,
     User,
 )
@@ -88,6 +90,10 @@ def resolved_user(*, active: bool = True) -> ResolvedUser:
             subscription_status=SubscriptionStatus.ACTIVE,
             subscription_valid_until=None,
             subscription_synced_at=NOW,
+            subscription_period=SubscriptionPeriod(
+                datetime(2026, 12, 15, tzinfo=timezone.utc),
+                datetime(2027, 1, 15, tzinfo=timezone.utc),
+            ),
             created_at=NOW,
             updated_at=NOW,
         ),
@@ -120,8 +126,8 @@ def test_preflight_resolves_access_and_reserves_monthly_quota() -> None:
     assert result.resolved_user is user
     assert scheduled_user is user
     assert result.quota_reservation.remaining == 1
-    assert usage.created_from == datetime(2026, 12, 1, tzinfo=timezone.utc)
-    assert usage.created_before == datetime(2027, 1, 1, tzinfo=timezone.utc)
+    assert usage.created_from == datetime(2026, 12, 15, tzinfo=timezone.utc)
+    assert usage.created_before == datetime(2027, 1, 15, tzinfo=timezone.utc)
 
 
 def test_preflight_rejects_unknown_inactive_and_over_quota_users() -> None:
@@ -139,6 +145,22 @@ def test_preflight_rejects_unknown_inactive_and_over_quota_users() -> None:
             await service.check(2)
 
         active = resolved_user()
+        missing_period = ResolvedUser(
+            user=replace(
+                active.user,
+                subscription_period=None,
+            ),
+            plan=active.plan,
+            identity=active.identity,
+        )
+        missing = PreflightService(
+            FakeAccounts({5: missing_period}),
+            FakeConversationUsage(completed=0),
+            clock=lambda: NOW,
+        )
+        with pytest.raises(InactiveSubscriptionError):
+            await missing.check(5)
+
         limited = PreflightService(
             FakeAccounts({3: active}),
             FakeConversationUsage(completed=60),

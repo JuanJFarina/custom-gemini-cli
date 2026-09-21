@@ -200,6 +200,32 @@ class PostgresConversationRepository:
                 tool_call.interaction_index,
             )
 
+    async def save_scheduled(
+        self,
+        *,
+        user_id: UUID,
+        telegram_chat_id: int,
+        response_text: str,
+        model: str,
+    ) -> None:
+        async with self.pool.acquire() as connection:
+            await connection.execute(
+                """
+                INSERT INTO conversations (
+                    user_id, telegram_chat_id, prompt, response, model,
+                    kind, status, completed_at
+                )
+                VALUES (
+                    $1, $2, NULL, $3, $4,
+                    'scheduled_message', 'completed', NOW()
+                )
+                """,
+                user_id,
+                telegram_chat_id,
+                response_text,
+                model,
+            )
+
 
 @dataclass(frozen=True, slots=True)
 class PostgresConversationStore:
@@ -255,6 +281,19 @@ class PostgresConversationStore:
             ),
         )
 
+    async def save_scheduled(
+        self,
+        *,
+        response_text: str,
+        model: str,
+    ) -> None:
+        await self.repository.save_scheduled(
+            user_id=self.user_id,
+            telegram_chat_id=self.telegram_chat_id,
+            response_text=response_text,
+            model=model,
+        )
+
 
 def _bounded_context(
     *,
@@ -284,7 +323,7 @@ def _bounded_context(
 
 def _record_from_row(row: asyncpg.Record) -> ConversationRecord:
     return ConversationRecord(
-        prompt=_text(row, "prompt"),
+        prompt=_optional_text(row, "prompt"),
         response=_text(row, "response"),
         created_at=_format_created_at(row["created_at"]),
         kind=_text(row, "kind"),
@@ -296,6 +335,16 @@ def _record_from_row(row: asyncpg.Record) -> ConversationRecord:
 def _format_conversation_for_context(record: ConversationRecord) -> str:
     if record.kind == "tool_call":
         return _format_tool_call_for_context(record)
+    if record.kind == "scheduled_message":
+        return json.dumps(
+            {
+                "conversation_date": record.created_at,
+                "conversation_kind": "scheduled_message",
+                "assistant_message": record.response,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
 
     return json.dumps(
         {
@@ -340,6 +389,15 @@ def _text(row: asyncpg.Record, key: str) -> str:
     value: object = row[key]
     if not isinstance(value, str):
         raise TypeError(f"Expected {key} to be text.")
+    return value
+
+
+def _optional_text(row: asyncpg.Record, key: str) -> str | None:
+    value: object = row[key]
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError(f"Expected {key} to be text or null.")
     return value
 
 

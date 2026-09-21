@@ -24,13 +24,18 @@
 - **Recurring-event behavior**: Recurring events preserve ordinary timed, overnight, all-day, multi-day, timezone, type, title, description, notification-lead, update, disable, re-enable, and deletion behavior. An explicit null recurrence rule converts one back to a one-time event.
 - **Event notifications**: A process-local `AgentsScheduler` checks every five minutes, derives matching local occurrences, wakes the owning active user's agent without modifying tools, and stores `last_notified_at` only after successful delivery.
 - **Event notification policy**: Notifications default to the event start, while positive lead times open the window earlier. The scheduler sends an unnotified occurrence any time from its window opening until it ends, retries failed delivery during that period, and does not consume conversation quota.
+- **Scheduled-agent scope**: Scheduled runs share profiles, prior conversation loading, current time and weather, Gemini, Google Search grounding, and the core reason-and-act loop with normal conversations. Their runtime store includes every authorized read-only tool and excludes modifying tools.
+- **Scheduled-message history**: Every delivered `user_event`, `system_event`, or `interaction_event` message is persisted as a standalone assistant message with no fabricated user prompt. Scheduled messages and their read-only tool interactions are available to later conversation context without consuming conversation quota.
+- **Interaction events**: Every user owns one active or disabled `interaction_event` with no fixed schedule, duration, recurrence, notification quota, or deletion flow. The scheduler considers it only after the same user has no due ordinary event in that pass.
+- **Calm proactive interactions**: Interaction probability grows from the latest user or successfully delivered assistant contact using the interval-independent shape-2, 96-hour Weibull policy. Interactions stop after seven days without an actual user message, automatically resume when the user returns, have no quiet period, and consume neither quota.
 - **Native Telegram media input**: Harle accepts supported Telegram images, voice notes, and ordinary audio messages and provides their bytes directly to Gemini throughout the current reason-and-act loop. Voice notes are the primary audio target; audio sent as a generic document remains unsupported.
 - **Recent Telegram media**: Current-message media is attached automatically. A process-local, best-effort store retains the ten newest Telegram media references per user for twelve hours so the agent can load an earlier attachment through a read-only tool.
 - **Media validation and history**: Unsupported media receives a concise `Formato no soportado` response before agent execution. Combined raw attachments are limited to 12 MiB per turn. Conversation history stores a compact attachment marker, caption, and filename when available, while raw bytes and Telegram file identifiers remain outside model context and persistence.
 - **Telegram deduplication**: Every Telegram `update_id` is persisted before assistant work so webhook retries do not create a second conversation or tool change.
 - **Ordered message aggregation**: Consecutive messages join the active turn while reasoning is safe to restart; messages received after tool execution or delivery begins become the next turn.
 - **Temporary safety bans**: The tenth valid message within two seconds triggers a per-identity cooldown that escalates from 60 seconds to 5 minutes and then 1 hour, with strike decay and at most one notice per cooldown.
-- **Plan quotas**: Current-month completed conversations are limited by the user's configured plan, with UTC reset boundaries and in-flight reservations. The provisional free, basic, and max limits are 60, 480, and 1,920 monthly conversations.
+- **Exact subscription-period quotas**: Manually provisioned accounts store exact current `subscription_period_starts_at` and `subscription_period_ends_at` UTC boundaries. Completed conversations and successful ordinary event notifications use those half-open boundaries with process-local in-flight reservations instead of UTC calendar months.
+- **Separate event-notification quotas**: Plans limit successful `user_event` and `system_event` deliveries separately from conversations. Successful occurrences remain in a user-owned delivery ledger, failed attempts and interaction messages consume no allowance, and the first blocked occurrence in a period receives one static exhaustion notice.
 
 ## Pending Product MVP
 
@@ -50,17 +55,12 @@
 - **User-authorized modifications**: Harle may modify expenses, reminders, calendar events, profiles, memories, or other user data when the user directly asks for that modification. If Harle infers, suggests, or initiates a modification itself, it must ask the user first.
 - **Confirmation and audit**: Inferred modifications should become expiring proposed actions that the same user can confirm or cancel, and every executed modification should be auditable.
 - **Automated subscription synchronization**: Harle should receive current plan and subscription state safely from the external registration and payment product.
-- **Separate event-notification quotas**: Each plan should have a monthly event-notification allowance separate from conversation quota. The provisional free, basic, and max limits are 15, 60, and 240 successful notifications per UTC month.
-- **Notification quota accounting**: Successful Telegram deliveries for both `user_event` and `system_event` occurrences should count once. Reservations should happen before Gemini, while failed deliveries, retries, and quota notices should consume no allowance.
-- **Notification quota visibility**: Relevant event flows should expose the plan limit, remaining allowance, and exact UTC reset boundary. The first blocked occurrence in a UTC month should receive one static, non-Gemini quota-exhausted notice instead of failing silently.
-- **Notification delivery ledger**: Successful event notifications should have user-owned delivery records so monthly usage and occurrence idempotency do not depend on the event's latest `last_notified_at` value or disappear when an event is deleted.
 - **Privacy controls**: Users should be able to export and delete their data according to defined retention, backup, and deletion policies.
 - **Durable accepted work**: Work accepted from Telegram should survive process restarts without duplicate side effects or duplicate responses where the provider permits it.
 - **Operational readiness**: Broad release requires automated quality gates, readiness checks, safe metrics and logs, backups, and exercised restoration.
 
 ## Possible Later Features
 
-- **Proactive check-ins**: Harle may follow up on tasks, situations, habits, or emotional context when the user enables it and notification preferences allow it.
 - **External context injectors**: Harle may use cached or polled context providers for data such as weather, location, reminders, calendars, or other user-authorized topics.
 - **Durable background queues**: Harle may use durable queues for scheduled agent wakeups, outbound messages, proposed actions, and integration polling when reliability requires it.
 - **Google import and synchronization**: An authorized agent tool may invoke a controlled migration or synchronization service that imports Google Sheets expenses and Google Calendar events into Harle's internal systems.

@@ -23,6 +23,7 @@ from harle_infrastructure.postgres import (
     PostgresEventNotificationUsageRepository,
     PostgresEventRepository,
     PostgresExpenseRepository,
+    PostgresInteractionEventRepository,
     PostgresTelegramUpdateRepository,
     PostgresUserProfileRepository,
     create_postgres_pool,
@@ -35,6 +36,7 @@ from harle_services.events import (
     EventNotificationQuotaService,
     EventNotificationService,
     EventService,
+    InteractionEventService,
 )
 from harle_services.expenses import ExpenseService
 from harle_services.messaging import MessageCoordinator
@@ -42,6 +44,7 @@ from harle_services.runtime import UserRuntimeFactory
 from harle_services.tools import (
     ToolAccessPolicy,
     ToolFamilyRegistration,
+    ToolInjectionContext,
     ToolRegistry,
     ToolsInjector,
     create_internal_events_registration,
@@ -85,6 +88,10 @@ class ProcessRuntime:
     def maximum_media_request_size(self) -> int:
         return self.telegram.maximum_media_request_size
 
+    @property
+    def interactions(self) -> InteractionEventService:
+        return self.scheduler.interactions
+
 
 @dataclass(frozen=True, slots=True)
 class ProcessRuntimeConfig:
@@ -99,6 +106,7 @@ class ProcessRuntimeConfig:
 @dataclass(frozen=True, slots=True)
 class EventToolDependencies:
     repository: EventRepository
+    interactions: InteractionEventService
     notification_quotas: EventNotificationQuotaService
 
 
@@ -126,6 +134,7 @@ def create_tools_injector(
         registrations.append(
             create_internal_events_registration(
                 EventService(event_tools.repository),
+                event_tools.interactions,
                 event_tools.notification_quotas,
             ),
         )
@@ -180,6 +189,9 @@ def _build_process_runtime(
     accounts = PostgresAccountRepository(pool)
     conversations = PostgresConversationRepository(pool)
     event_repository = PostgresEventRepository(pool)
+    interaction_service = InteractionEventService(
+        PostgresInteractionEventRepository(pool),
+    )
     notification_quotas = EventNotificationQuotaService(
         PostgresEventNotificationUsageRepository(pool),
     )
@@ -196,26 +208,39 @@ def _build_process_runtime(
         accounts=accounts,
         conversations=conversations,
     )
+    tools = create_tools_injector(
+        legacy_settings,
+        expense_repository=PostgresExpenseRepository(pool),
+        event_tools=EventToolDependencies(
+            repository=event_repository,
+            interactions=interaction_service,
+            notification_quotas=notification_quotas,
+        ),
+        recent_media_store=recent_media,
+        media_downloader=messenger,
+    )
     notifications = EventNotificationService(
         preflight=preflight,
         users=users,
         messenger=messenger,
         quotas=notification_quotas,
+        interactions=interaction_service,
+        tool_store_builder=lambda resolved_user, timezone: tools.inject_scheduled(
+            ToolInjectionContext(
+                resolved_user=resolved_user,
+                timezone=timezone,
+                prompt="Scheduled agent wake-up",
+                recent_media=recent_media.list_recent(
+                    user_id=resolved_user.user.id,
+                ),
+            ),
+        ),
     )
     return ProcessRuntime(
         pool=pool,
         preflight=preflight,
         users=users,
-        tools=create_tools_injector(
-            legacy_settings,
-            expense_repository=PostgresExpenseRepository(pool),
-            event_tools=EventToolDependencies(
-                repository=event_repository,
-                notification_quotas=notification_quotas,
-            ),
-            recent_media_store=recent_media,
-            media_downloader=messenger,
-        ),
+        tools=tools,
         messages=MessageCoordinator(
             PostgresTelegramUpdateRepository(pool),
             preflight.check_rate_limit,
@@ -228,6 +253,7 @@ def _build_process_runtime(
         ),
         scheduler=AgentsScheduler(
             events=EventService(event_repository),
+            interactions=interaction_service,
             notifications=notifications,
             interval_seconds=config.scheduler_interval_seconds,
         ),

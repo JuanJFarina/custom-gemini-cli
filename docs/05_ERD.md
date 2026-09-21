@@ -2,7 +2,7 @@
 
 ## Scope
 
-This is a conceptual view of Harle's current PostgreSQL model. It aligns with the [SRS](03_SRS.md) and [Project Management Plan](04_PMP.md) while omitting migration-level detail.
+This is a conceptual view of Harle's current PostgreSQL model. The base relationships appear first, followed by the implemented subscription, notification, interaction, and scheduled-message extensions. It aligns with the [SRS](03_SRS.md) and [Project Management Plan](04_PMP.md) while omitting migration-level detail.
 
 ```mermaid
 erDiagram
@@ -18,6 +18,7 @@ erDiagram
     PLAN {
         TEXT code PK
         INTEGER monthly_request_limit
+        INTEGER monthly_notification_limit
         BOOLEAN active
         TIMESTAMPTZ created_at
         TIMESTAMPTZ updated_at
@@ -29,6 +30,8 @@ erDiagram
         TEXT plan_code FK
         TEXT subscription_status
         TIMESTAMPTZ subscription_valid_until
+        TIMESTAMPTZ subscription_period_starts_at
+        TIMESTAMPTZ subscription_period_ends_at
         TIMESTAMPTZ subscription_synced_at
         TIMESTAMPTZ created_at
         TIMESTAMPTZ updated_at
@@ -155,8 +158,9 @@ erDiagram
 
 ### Conversations and Telegram Claims
 
-- Conversation rows use kind `conversation` or `tool_call`.
-- Conversation status is `processing`, `completed`, or `failed`; monthly quota counts only completed conversation rows.
+- Conversation rows use kind `conversation`, `tool_call`, or `scheduled_message`.
+- A scheduled-message row has no user prompt and stores one successfully delivered assistant message. It is available to later context but excluded from conversation quota.
+- Conversation status is `processing`, `completed`, or `failed`; subscription-period quota counts only completed `conversation` rows.
 - A non-null Telegram update ID identifies a delivered conversation. Tool interactions also require an update-derived identifier and interaction index for complete idempotency.
 - Telegram claim status is `received`, `processing`, `tool_started`, `delivering`, `delivered`, `failed`, `rate_limited`, `interrupted`, or `rejected`.
 - Telegram update IDs are globally unique for the bot and persist deduplication state across process restarts.
@@ -192,18 +196,34 @@ erDiagram
 
 Recent Telegram media remains outside the PostgreSQL ERD while its twelve-hour retention is best-effort. The process-local store contains only user-scoped Telegram references and compact metadata, never raw image or audio bytes.
 
-## Confirmed Pending Notification-Quota Delta
+## Current Subscription, Notification, and Interaction Extensions
 
-This target delta is required but is not part of the current PostgreSQL model.
+These extensions are implemented by the ordered subscription and notification SQL scripts.
 
 ```mermaid
 erDiagram
+    HARLE_USER ||--|| INTERACTION_EVENT : owns
     HARLE_USER ||--o{ EVENT_NOTIFICATION_DELIVERY : owns
     INTERNAL_EVENT o|--o{ EVENT_NOTIFICATION_DELIVERY : produces
     HARLE_USER ||--o{ EVENT_NOTIFICATION_QUOTA_NOTICE : receives
 
+    HARLE_USER {
+        TIMESTAMPTZ subscription_period_starts_at
+        TIMESTAMPTZ subscription_period_ends_at
+    }
+
     PLAN {
         INTEGER monthly_notification_limit
+    }
+
+    INTERACTION_EVENT {
+        UUID id PK
+        UUID user_id FK
+        TEXT status
+        TIMESTAMPTZ last_user_message_at
+        TIMESTAMPTZ last_agent_message_at
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
     }
 
     EVENT_NOTIFICATION_DELIVERY {
@@ -224,17 +244,32 @@ erDiagram
     }
 ```
 
-- `PLAN.monthly_notification_limit` is separate from `monthly_request_limit`; the provisional free, basic, and max values are 15, 60, and 240.
-- A delivery row represents one successfully delivered `user_event` or `system_event` occurrence. Monthly usage counts `delivered_at` inside inclusive-start and exclusive-end UTC boundaries.
+- `subscription_period_starts_at` and `subscription_period_ends_at` are exact current UTC boundaries synchronized from the external account product. The start is inclusive, the end is exclusive, and `subscription_valid_until` remains a separate access-expiration field.
+- Conversation and event-notification usage use the synchronized boundaries. Harle does not derive allowance periods from account creation, an original subscription date, or UTC calendar months.
+- `PLAN.monthly_notification_limit` is separate from `monthly_request_limit`; the provisional free, basic, and max values are 15, 60, and 240 per synchronized subscription period.
+- A delivery row represents one successfully delivered `user_event` or `system_event` occurrence. Period usage counts `delivered_at` within the owning user's synchronized boundaries.
 - The event identifier, occurrence start, and notification window are unique together so a successful occurrence cannot consume allowance twice.
 - Deleting an event sets the ledger's event reference to null instead of deleting its usage. Deleting the owning account removes its delivery and notice records under the account-deletion policy.
-- The notice marker permits at most one static, non-Gemini quota-exhausted notice attempt per user and UTC month. It consumes neither conversation nor event-notification allowance.
+- The notice marker permits at most one static, non-Gemini quota-exhausted notice attempt per user and synchronized subscription period. It consumes neither conversation nor event-notification allowance.
 - Process-local in-flight reservations remain outside PostgreSQL while deployment is limited to one process. Durable distributed reservations belong with later queue and worker design.
+- Every user owns exactly one interaction event. Its status is `active` or `disabled`; the user may change that status but cannot delete the row.
+- An interaction event has no start, end, notification window, recurrence, or materialized occurrence. `last_user_message_at` tracks actual inbound activity for the seven-day cutoff, and `last_agent_message_at` advances only after a successful assistant delivery.
+- The scheduler evaluates an active interaction event only after the same user has no due ordinary event. Its probability uses the later contact timestamp, resets after successful assistant delivery, and consumes no conversation or event-notification allowance.
+
+## Current Scheduled-Message Extension
+
+The conversation model supports `kind = 'scheduled_message'` in addition to `conversation` and `tool_call`.
+
+- A scheduled-message row stores the assistant text delivered for a `user_event`, `system_event`, or `interaction_event`.
+- Its user prompt is absent rather than synthesized, and no pending or expected user response is represented.
+- The row is included in later conversation context but excluded from conversation quota.
+- Read-only tool interactions from the scheduled run remain separate `tool_call` history rows under the existing interaction contract.
+- Scheduled-message persistence occurs only after successful Telegram delivery. Failed generation or delivery creates no history row and does not advance interaction contact state.
 
 ## Out Of Scope For This ERD
 
 - Proposed actions and action audits
 - Durable Telegram inbox and outbox queues
-- Notification preferences and durable scheduler or delivery records beyond the confirmed quota ledger and notice marker
+- Ordinary-event notification preferences and durable scheduler queues or outbox records
 - OAuth credentials and multi-user Google integrations
 - External registration, payment, and web-interface data

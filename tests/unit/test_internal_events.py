@@ -28,7 +28,7 @@ from harle_services.events import (
     TimedEventSchedule,
     UpdateEvent,
 )
-from harle_services.tools.internal_events import (
+from harle_services.tools.event_schedules import (
     CreateEventArgs,
     MonthlyRecurrenceArgs,
     UpdateEventArgs,
@@ -207,9 +207,7 @@ class FakeEventRepository:
                 event.recurrence_rule is not None
                 or (
                     event.last_notified_at is None
-                    and event.notification_window_start
-                    <= current_time
-                    < event.ends_at
+                    and event.notification_window_start <= current_time < event.ends_at
                 )
             )
         ]

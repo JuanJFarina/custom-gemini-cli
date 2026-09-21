@@ -5,7 +5,12 @@ from uuid import UUID
 
 from harle_domain.accounts import ResolvedUser
 from harle_domain.messaging import RecentMedia
-from harle_domain.tools import HarleToolStore, ToolFamily
+from harle_domain.tools import (
+    HarleToolStore,
+    NotificationAllowance,
+    ToolEffect,
+    ToolFamily,
+)
 from harle_utils import log
 
 from .authorization import ToolAccessPolicy
@@ -86,8 +91,9 @@ class ToolsInjector:
             user_id=context.resolved_user.user.id,
             timezone=context.timezone,
             authorized_families=families,
-            monthly_notification_limit=(
-                context.resolved_user.plan.monthly_notification_limit
+            notification_allowance=NotificationAllowance(
+                limit=context.resolved_user.plan.monthly_notification_limit,
+                period=context.resolved_user.user.require_subscription_period(),
             ),
         )
         if not context.recent_media:
@@ -100,13 +106,42 @@ class ToolsInjector:
             ),
         )
 
+    def inject_scheduled(
+        self,
+        context: ToolInjectionContext,
+    ) -> HarleToolStore:
+        authorized = self.access_policy.authorized_families(context.resolved_user)
+        if not context.recent_media:
+            authorized = authorized - {ToolFamily.RECENT_MEDIA}
+        store = self.registry.build_store(
+            user_id=context.resolved_user.user.id,
+            timezone=context.timezone,
+            authorized_families=authorized,
+            notification_allowance=NotificationAllowance(
+                limit=context.resolved_user.plan.monthly_notification_limit,
+                period=context.resolved_user.user.require_subscription_period(),
+            ),
+        )
+        instructions = (
+            (_recent_media_prompt(context.recent_media),)
+            if context.recent_media
+            else ()
+        )
+        return HarleToolStore(
+            tools=tuple(
+                tool
+                for tool in store.tools
+                if tool.definition.effect is ToolEffect.READ
+            ),
+            family_instructions=instructions,
+        )
+
     def inject_for_explicit_user_id(self, user_id: UUID) -> HarleToolStore:
         families = self.access_policy.authorized_families_for_user_id(user_id)
         return self.registry.build_store(
             user_id=user_id,
             timezone="UTC",
             authorized_families=families,
-            monthly_notification_limit=0,
         )
 
 

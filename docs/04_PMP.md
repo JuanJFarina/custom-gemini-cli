@@ -22,7 +22,8 @@ This plan covers:
 - Process-scoped repositories and clients must not retain a current user.
 - Commercial users receive PostgreSQL expenses and events.
 - Juan receives PostgreSQL events and private legacy Google Sheets expenses based only on his configured internal UUID.
-- Plans will carry separate monthly conversation and event-notification limits. The provisional free, basic, and max notification limits are 15, 60, and 240 successful deliveries per UTC month.
+- Plans will carry separate conversation and event-notification limits. The provisional free, basic, and max notification limits are 15, 60, and 240 successful deliveries per synchronized subscription period.
+- The external account product will synchronize each user's exact current `subscription_period_starts_at` and `subscription_period_ends_at` UTC boundaries. These boundaries, rather than account creation, an original subscription date, or UTC calendar months, will define both allowance periods.
 - Event-notification allowance will be reserved before Gemini and consumed only after successful Telegram delivery for either event type.
 - Current controlled-beta schema changes use ordered idempotent SQL scripts. Versioned migrations remain required before broad launch.
 - The current data model is defined in the [ERD](05_ERD.md).
@@ -31,7 +32,7 @@ This plan covers:
 
 - No user may read or modify another user's conversations, profiles, expenses, events, or tool integrations.
 - Unknown, inactive, banned, duplicate, or over-quota requests must stop before Gemini and tools.
-- An event occurrence without notification allowance must stop before Gemini, must not consume conversation quota, and must not be marked as delivered.
+- An event occurrence without notification allowance in the user's synchronized subscription period must stop before Gemini, must not consume conversation quota, and must not be marked as delivered.
 - A duplicate Telegram update must not duplicate a conversation, tool record, or side effect.
 - Failed event generation or delivery must not consume notification allowance, and a successfully delivered occurrence must count at most once.
 - Logs and metrics must exclude conversation bodies, profile text, financial descriptions, event descriptions, credentials, spreadsheet identifiers, and tool payloads.
@@ -49,7 +50,7 @@ Goals:
 - Move assistant orchestration and failure policy out of `harle_api` so the API depends only on services and utilities.
 - Run the PostgreSQL expense, event, isolation, and restart-deduplication tests in the release environment.
 - Add focused tests for non-Juan denial before Google Sheets client construction and for ban escalation, notice suppression, and strike decay.
-- Add plan-level event-notification quotas, successful-delivery accounting, in-flight reservations, and the one-per-month static exhaustion notice.
+- Add exact provisioned subscription-period boundaries, plan-level event-notification quotas, successful-delivery accounting, in-flight reservations, and the one-per-period static exhaustion notice.
 
 Exit criteria:
 
@@ -58,8 +59,8 @@ Exit criteria:
 - All release-critical PostgreSQL integration tests pass against the deployed schema.
 - Google Sheets construction and execution both fail safely for every non-Juan UUID.
 - All three cooldown levels and strike decay are deterministic under an injected clock.
-- Free, basic, and max users are limited to 15, 60, and 240 successful event notifications per UTC month without consuming conversation quota.
-- Quota admission happens before Gemini, failed attempts consume nothing, delivered occurrences count once, and the user receives at most one non-Gemini exhaustion notice per month.
+- Free, basic, and max users are limited to 15, 60, and 240 successful event notifications per synchronized subscription period without consuming conversation quota.
+- Quota admission happens before Gemini, failed attempts consume nothing, delivered occurrences count once, and the user receives at most one non-Gemini exhaustion notice per synchronized subscription period.
 
 ### 2. Broad-Launch Transaction and Delivery Safety
 
@@ -69,7 +70,7 @@ Goals:
 - Add direct-versus-inferred write authorization at runtime.
 - Persist proposed actions, confirmation, cancellation, expiration, execution state, and action audits.
 - Add durable Telegram inbox and outbox processing with leases, bounded retries, and stable idempotency keys.
-- Synchronize plan and subscription state from the external account product through an authenticated, idempotent contract.
+- Synchronize plan, subscription state, and exact current subscription-period boundaries from the external account product through an authenticated, idempotent contract.
 
 Exit criteria:
 
@@ -77,7 +78,7 @@ Exit criteria:
 - Inferred writes cannot execute before same-user confirmation.
 - Every modifying action has one redacted audit record.
 - Accepted Telegram work resumes safely after a process restart.
-- Subscription updates are authenticated, idempotent, and stop revoked users before assistant execution.
+- Subscription updates are authenticated, idempotent, update exact allowance boundaries, and stop revoked users before assistant execution.
 
 ### 3. Privacy and Operations
 
@@ -104,11 +105,15 @@ Implemented baseline:
 - Events may remain one-time or repeat forever through one `week_days` or `month_days` rule without materialized occurrence rows.
 - A process-local `AgentsScheduler` runs every five minutes, derives unnotified local occurrences from their notification-window start until their end, wakes the owning active user's agent without modifying tools or consuming conversation quota, and records successful delivery. Notification lead defaults to zero minutes.
 - Supported Telegram images, voice notes, and audio files reach Gemini as native content parts. Current media is attached automatically and the ten newest references remain available through a read-only tool for twelve hours on a best-effort basis.
+- Delivered ordinary and interaction-event messages are persisted as standalone assistant messages, including read-only tool interactions, without fabricated user prompts or conversation-quota usage.
+- Scheduled runs receive shared profiles, conversation context, current time and weather, Google Search grounding, and every authorized read-only tool while modifying tools are absent from the runtime store.
+- Every user owns one non-deletable active or disabled `interaction_event` with no fixed schedule or recurrence. It is evaluated only when the same user has no due ordinary event in the scheduler pass.
+- Interaction events use the interval-independent shape-2, 96-hour Weibull policy from the latest user or successful assistant contact. They stop after seven days without an actual user message, automatically resume when the user returns, require no pending response, and use neither quota nor a quiet period.
 
 Remaining goals:
 
 - Add user-controlled memory and profile inspection, correction, refinement, and deletion.
-- Add quiet periods and bounded proactive check-ins only if later product policy requires them.
+- Add optional quiet periods for ordinary event notifications only if later product policy requires them.
 - Add an authorized agent tool that invokes a controlled Google expense and calendar import or synchronization service.
 - Add multi-user Google Sheets and Google Calendar through least-privilege OAuth.
 - Define source-of-truth, synchronization, conflict, and revocation behavior before connecting internal and Google data.
@@ -118,7 +123,9 @@ Exit criteria:
 
 - Each capability has explicit product policy, user ownership, authorization, privacy, and delivery behavior before implementation.
 - New integrations do not expose another user's credentials or data.
-- Proactive behavior remains opt-in and preserves user agency.
+- Proactive behavior remains user-controlled through the interaction event's active or disabled state and preserves user agency.
+- Each interaction event is user-disableable, cannot be deleted, is suppressed only by the same user's ordinary due event, and persists successful output as a standalone assistant message.
+- The interaction probability is interval-independent, failed attempts reset no state, and no interaction message is sent after seven days of user inactivity.
 - A recurring event remains one row, supports ordinary event schedules, and delivers at most one notification for each matching occurrence.
 - Current-message media reaches Gemini directly, recent media can be reloaded by internal attachment ID, and unsupported media never invokes the assistant.
 - Images, audio, imported records, and scheduled event context remain isolated to the owning user.
@@ -141,6 +148,9 @@ Exit criteria:
 - **Sensitive logging**: Use structured allowlisted fields and test that protected content is absent.
 - **Recurring notification duplication**: Compare `last_notified_at` with the computed occurrence window and update it only after successful Telegram delivery.
 - **Notification quota drift**: Use a successful-delivery ledger plus process-local in-flight reservations, retain consumed usage when an event is deleted, and reconcile quota persistence with durable outbox work before multiple workers are allowed.
+- **Subscription-period drift**: Treat synchronized current-period boundaries as external account data, validate that start precedes end, and never infer billing periods from local account timestamps.
+- **Excessive proactive messaging**: Evaluate interaction events only after same-user ordinary events, use the interval-independent 96-hour probability, reset it after every successful assistant delivery, and enforce the seven-day user-inactivity cutoff.
+- **Scheduled context loss**: Persist each successfully delivered scheduled message without fabricating a user prompt so a later reply has the assistant-initiated context.
 - **Sensitive media references**: Keep Telegram file identifiers out of logs and model context, retain no raw bytes after active use, and scope every recent-media lookup by internal user UUID.
 - **Ephemeral media loss**: Treat the twelve-hour process-local media window as best-effort and allow restart to discard it.
 - **Unresolved policy implemented as code**: Block the affected phase until the product decision is recorded in Features or the SRS.
@@ -149,6 +159,7 @@ Exit criteria:
 
 - A successful Telegram event notification followed by failure to persist `last_notified_at` may be delivered again. Durable outbox delivery is deferred.
 - A successful Telegram delivery followed by failure to persist its notification-usage record may temporarily undercount quota or be retried. Durable transactional outbox delivery is deferred.
+- A successful scheduled Telegram delivery followed by failure to persist its standalone history row may leave the next conversation without that outbound context. Durable transactional outbox delivery is deferred.
 - A zero-minute notification may arrive up to one scheduler interval after event start because the process-local scheduler runs every five minutes.
 - The single-process scheduler may scan every active recurring definition on each five-minute pass. Distributed or indexed recurrence scheduling is deferred until measured load requires it.
 - Voice notes are the primary audio target. Audio uploaded as a generic Telegram document is unsupported.
@@ -164,7 +175,6 @@ Exit criteria:
 - Future expense currencies, category customization, and export semantics
 - Whether Juan may move from legacy Sheets to internal expenses and how existing data would be handled
 - Memory consent and automatic learning policy
-- Proactive check-in preferences and quiet periods
 - System-event creation permissions and supported task payloads
 - The long-term Telegram image and audio MIME allowlist beyond the voice-note-first beta
 - Internal versus Google source-of-truth and synchronization rules

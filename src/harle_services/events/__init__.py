@@ -1,3 +1,7 @@
+from .interactions import (
+    InteractionEventService,
+    interaction_probability,
+)
 from .notifications import EventNotificationOutcome, EventNotificationService
 from .quota import (
     EventNotificationQuotaService,
@@ -28,6 +32,7 @@ __all__ = [
     "EventNotificationQuotaService",
     "EventSchedule",
     "EventService",
+    "InteractionEventService",
     "NotificationQuotaAdmission",
     "NotificationQuotaExceeded",
     "NotificationQuotaReservation",
@@ -35,4 +40,5 @@ __all__ = [
     "NotificationQuotaStatus",
     "TimedEventSchedule",
     "UpdateEvent",
+    "interaction_probability",
 ]

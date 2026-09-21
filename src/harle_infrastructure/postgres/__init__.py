@@ -10,11 +10,12 @@ from harle_infrastructure.postgres.repositories.conversations import (
 from harle_infrastructure.postgres.repositories.event_notification_usage import (
     PostgresEventNotificationUsageRepository,
 )
-from harle_infrastructure.postgres.repositories.events import (
-    PostgresEventRepository,
-)
+from harle_infrastructure.postgres.repositories.events import PostgresEventRepository
 from harle_infrastructure.postgres.repositories.expenses import (
     PostgresExpenseRepository,
+)
+from harle_infrastructure.postgres.repositories.interaction_events import (
+    PostgresInteractionEventRepository,
 )
 from harle_infrastructure.postgres.repositories.profiles import (
     PostgresAssistantProfileRepository,
@@ -33,6 +34,7 @@ __all__ = [
     "PostgresConversationStore",
     "PostgresEventNotificationUsageRepository",
     "PostgresEventRepository",
+    "PostgresInteractionEventRepository",
     "PostgresExpenseRepository",
     "PostgresTelegramUpdateRepository",
     "PostgresUserProfileRepository",

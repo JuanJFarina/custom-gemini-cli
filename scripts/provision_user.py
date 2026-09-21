@@ -36,6 +36,8 @@ class AccountProvision:
     plan_code: str
     subscription_status: str
     subscription_valid_until: datetime | None
+    subscription_period_starts_at: datetime
+    subscription_period_ends_at: datetime
 
 
 @dataclass(frozen=True)
@@ -96,11 +98,11 @@ def _subscription_timestamp(value: str) -> datetime:
         parsed = datetime.fromisoformat(normalized)
     except ValueError as exc:
         raise argparse.ArgumentTypeError(
-            "subscription validity must be an ISO 8601 timestamp",
+            "subscription timestamp must be an ISO 8601 timestamp",
         ) from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise argparse.ArgumentTypeError(
-            "subscription validity must include a UTC offset",
+            "subscription timestamp must include a UTC offset",
         )
     return parsed.astimezone(timezone.utc)
 
@@ -166,6 +168,16 @@ def _parser() -> argparse.ArgumentParser:
         "--subscription-valid-until",
         type=_subscription_timestamp,
     )
+    parser.add_argument(
+        "--subscription-period-starts-at",
+        required=True,
+        type=_subscription_timestamp,
+    )
+    parser.add_argument(
+        "--subscription-period-ends-at",
+        required=True,
+        type=_subscription_timestamp,
+    )
     parser.add_argument("--preferred-name", required=True)
     parser.add_argument("--locale", required=True, type=_locale)
     parser.add_argument("--timezone", required=True, type=_timezone_name)
@@ -199,12 +211,27 @@ def parse_arguments() -> ProvisionRequest:
         datetime | None,
         arguments.subscription_valid_until,
     )
+    subscription_period_starts_at = cast(
+        datetime,
+        arguments.subscription_period_starts_at,
+    )
+    subscription_period_ends_at = cast(
+        datetime,
+        arguments.subscription_period_ends_at,
+    )
+    if subscription_period_ends_at <= subscription_period_starts_at:
+        parser.error("subscription period end must follow its start")
+    current_time = datetime.now(timezone.utc)
     if (
         subscription_status == "active"
         and subscription_valid_until is not None
-        and subscription_valid_until <= datetime.now(timezone.utc)
+        and subscription_valid_until <= current_time
     ):
         parser.error("an active subscription cannot already be expired")
+    if subscription_status == "active" and not (
+        subscription_period_starts_at <= current_time < subscription_period_ends_at
+    ):
+        parser.error("an active subscription period must contain the current time")
 
     try:
         request = ProvisionRequest(
@@ -219,6 +246,8 @@ def parse_arguments() -> ProvisionRequest:
                 plan_code=cast(str, arguments.plan_code),
                 subscription_status=subscription_status,
                 subscription_valid_until=subscription_valid_until,
+                subscription_period_starts_at=subscription_period_starts_at,
+                subscription_period_ends_at=subscription_period_ends_at,
             ),
             user_profile=UserProfileProvision(
                 preferred_name=_required_text(
@@ -332,9 +361,11 @@ async def _create_user(
                 plan_code,
                 subscription_status,
                 subscription_valid_until,
-                subscription_synced_at
+                subscription_synced_at,
+                subscription_period_starts_at,
+                subscription_period_ends_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, NOW())
+            VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8)
             RETURNING id
             """,
             request.account.display_name,
@@ -343,6 +374,8 @@ async def _create_user(
             request.account.plan_code,
             request.account.subscription_status,
             request.account.subscription_valid_until,
+            request.account.subscription_period_starts_at,
+            request.account.subscription_period_ends_at,
         ),
         "user insertion",
     )
@@ -381,6 +414,8 @@ async def _update_user(
             subscription_status = $5,
             subscription_valid_until = $6,
             subscription_synced_at = NOW(),
+            subscription_period_starts_at = $7,
+            subscription_period_ends_at = $8,
             updated_at = NOW()
         WHERE id = $1
         """,
@@ -390,6 +425,8 @@ async def _update_user(
         request.account.plan_code,
         request.account.subscription_status,
         request.account.subscription_valid_until,
+        request.account.subscription_period_starts_at,
+        request.account.subscription_period_ends_at,
     )
     if result != "UPDATE 1":
         raise RuntimeError("matched user no longer exists")

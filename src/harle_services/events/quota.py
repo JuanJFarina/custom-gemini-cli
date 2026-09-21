@@ -5,12 +5,12 @@ from enum import Enum
 from typing import TypeAlias
 from uuid import UUID
 
+from harle_domain.accounts import SubscriptionPeriod
 from harle_domain.events import (
     EventNotificationOccurrence,
     EventNotificationUsageRepository,
     InternalEvent,
 )
-from harle_services.access import utc_month_period
 from harle_utils import Clock, as_utc, utc_now
 
 
@@ -64,19 +64,19 @@ class EventNotificationQuotaService:
         *,
         user_id: UUID,
         monthly_limit: int,
+        period: SubscriptionPeriod,
     ) -> NotificationQuotaStatus:
         _require_positive_limit(monthly_limit)
-        period = utc_month_period(self._clock())
         delivered = await self._repository.count_deliveries(
             user_id=user_id,
             delivered_from=period.starts_at,
-            delivered_before=period.resets_at,
+            delivered_before=period.ends_at,
         )
         in_flight = len(self._reservations.get(user_id, set()))
         return NotificationQuotaStatus(
             limit=monthly_limit,
             remaining=max(0, monthly_limit - delivered - in_flight),
-            resets_at=period.resets_at,
+            resets_at=period.ends_at,
         )
 
     async def reserve(
@@ -84,10 +84,10 @@ class EventNotificationQuotaService:
         *,
         event: InternalEvent,
         monthly_limit: int,
+        period: SubscriptionPeriod,
     ) -> NotificationQuotaAdmission:
         _require_positive_limit(monthly_limit)
         occurrence = _notification_occurrence(event)
-        period = utc_month_period(self._clock())
         if await self._repository.was_delivered(occurrence=occurrence):
             return NotificationQuotaSkip.ALREADY_DELIVERED
 
@@ -98,7 +98,7 @@ class EventNotificationQuotaService:
         delivered = await self._repository.count_deliveries(
             user_id=event.user_id,
             delivered_from=period.starts_at,
-            delivered_before=period.resets_at,
+            delivered_before=period.ends_at,
         )
         in_flight = len(reservations) if reservations is not None else 0
         available = monthly_limit - delivered - in_flight
@@ -107,13 +107,13 @@ class EventNotificationQuotaService:
                 user_id=event.user_id,
                 limit=monthly_limit,
                 period_starts_at=period.starts_at,
-                resets_at=period.resets_at,
+                resets_at=period.ends_at,
             )
 
         reservation = NotificationQuotaReservation(
             occurrence=occurrence,
             remaining=available - 1,
-            resets_at=period.resets_at,
+            resets_at=period.ends_at,
         )
         if reservations is None:
             reservations = set()

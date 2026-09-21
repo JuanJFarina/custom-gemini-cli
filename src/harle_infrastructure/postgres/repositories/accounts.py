@@ -9,6 +9,7 @@ from harle_domain.accounts.models import (
     ExternalIdentity,
     Plan,
     ResolvedUser,
+    SubscriptionPeriod,
     SubscriptionStatus,
     User,
 )
@@ -20,6 +21,8 @@ RESOLVED_USER_COLUMNS = """
     users.subscription_status,
     users.subscription_valid_until,
     users.subscription_synced_at,
+    users.subscription_period_starts_at,
+    users.subscription_period_ends_at,
     users.created_at AS user_created_at,
     users.updated_at AS user_updated_at,
     plans.monthly_request_limit,
@@ -108,6 +111,7 @@ def _resolved_user_from_row(row: asyncpg.Record) -> ResolvedUser:
                 row,
                 "subscription_synced_at",
             ),
+            subscription_period=_optional_subscription_period(row),
             created_at=_required(row, "user_created_at", datetime),
             updated_at=_required(row, "user_updated_at", datetime),
         ),
@@ -160,3 +164,15 @@ def _optional_datetime(
     if not isinstance(value, datetime):
         raise TypeError(f"Expected {key} to be a datetime or null.")
     return value
+
+
+def _optional_subscription_period(
+    row: asyncpg.Record,
+) -> SubscriptionPeriod | None:
+    starts_at = _optional_datetime(row, "subscription_period_starts_at")
+    ends_at = _optional_datetime(row, "subscription_period_ends_at")
+    if starts_at is None and ends_at is None:
+        return None
+    if starts_at is None or ends_at is None:
+        raise TypeError("Subscription period boundaries must be supplied together.")
+    return SubscriptionPeriod(starts_at, ends_at)

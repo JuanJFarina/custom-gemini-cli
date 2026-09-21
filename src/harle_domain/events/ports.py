@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
-from .models import EventNotificationOccurrence, InternalEvent
+from .models import EventNotificationOccurrence, InteractionEvent, InternalEvent
 
 
 @runtime_checkable
@@ -117,3 +117,50 @@ class EventNotificationUsageRepository(Protocol):
         period_starts_at: datetime,
         delivered_at: datetime,
     ) -> None: ...
+
+
+@runtime_checkable
+class InteractionEventRepository(Protocol):
+    async def get_for_user(
+        self,
+        *,
+        user_id: UUID,
+    ) -> InteractionEvent | None: ...
+
+    async def list_active(
+        self,
+        *,
+        limit: int,
+        user_message_from: datetime,
+        current_time: datetime,
+    ) -> Sequence[InteractionEvent]: ...
+
+    async def disable(
+        self,
+        *,
+        user_id: UUID,
+        event_id: UUID,
+        updated_at: datetime,
+    ) -> InteractionEvent | None: ...
+
+    async def enable(
+        self,
+        *,
+        user_id: UUID,
+        event_id: UUID,
+        updated_at: datetime,
+    ) -> InteractionEvent | None: ...
+
+    async def record_user_message(
+        self,
+        *,
+        user_id: UUID,
+        update_ids: Sequence[int],
+    ) -> InteractionEvent | None: ...
+
+    async def record_agent_message(
+        self,
+        *,
+        user_id: UUID,
+        occurred_at: datetime,
+    ) -> InteractionEvent | None: ...

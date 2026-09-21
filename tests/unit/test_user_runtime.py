@@ -11,6 +11,7 @@ from harle_domain.accounts import (
     ExternalIdentity,
     Plan,
     ResolvedUser,
+    SubscriptionPeriod,
     SubscriptionStatus,
     User,
 )
@@ -86,6 +87,14 @@ class FakeConversationStore:
     ) -> None:
         return None
 
+    async def save_scheduled(
+        self,
+        *,
+        response_text: str,
+        model: str,
+    ) -> None:
+        del response_text, model
+
 
 def resolved_user(telegram_id: int, name: str) -> ResolvedUser:
     user_id = uuid4()
@@ -104,6 +113,10 @@ def resolved_user(telegram_id: int, name: str) -> ResolvedUser:
         subscription_status=SubscriptionStatus.ACTIVE,
         subscription_valid_until=None,
         subscription_synced_at=NOW,
+        subscription_period=SubscriptionPeriod(
+            datetime(2026, 8, 1, tzinfo=timezone.utc),
+            datetime(2026, 9, 1, tzinfo=timezone.utc),
+        ),
         created_at=NOW,
         updated_at=NOW,
     )

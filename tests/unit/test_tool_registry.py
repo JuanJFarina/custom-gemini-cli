@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from typing import cast
 from uuid import UUID, uuid4
@@ -10,10 +11,16 @@ from harle_domain.accounts import (
     ExternalIdentity,
     Plan,
     ResolvedUser,
+    SubscriptionPeriod,
     SubscriptionStatus,
     User,
 )
-from harle_domain.events import EventRepository, InternalEvent
+from harle_domain.events import (
+    EventRepository,
+    EventStatus,
+    InteractionEvent,
+    InternalEvent,
+)
 from harle_domain.expenses import ExpenseRepository
 from harle_infrastructure.google_sheets import (
     GoogleSheetsClient,
@@ -23,6 +30,7 @@ from harle_infrastructure.google_sheets import (
 from harle_services.bootstrap import EventToolDependencies, create_tools_injector
 from harle_services.events import (
     EventNotificationQuotaService,
+    InteractionEventService,
     NotificationQuotaStatus,
 )
 from harle_services.tools import ToolInjectionContext
@@ -46,13 +54,48 @@ class FakeNotificationQuotas:
         *,
         user_id: UUID,
         monthly_limit: int,
+        period: object,
     ) -> NotificationQuotaStatus:
-        del user_id
+        del user_id, period
         return NotificationQuotaStatus(
             limit=monthly_limit,
             remaining=monthly_limit - 1,
             resets_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
         )
+
+
+class FakeInteractions:
+    async def get(self, *, user_id: UUID) -> None:
+        del user_id
+        return None
+
+    async def disable(self, **_: object) -> None:
+        return None
+
+    async def enable(self, **_: object) -> None:
+        return None
+
+
+class FakeInteractionLifecycle:
+    def __init__(self, event: InteractionEvent) -> None:
+        self.event = event
+
+    async def get(self, *, user_id: UUID) -> InteractionEvent | None:
+        return self.event if self.event.user_id == user_id else None
+
+    async def disable(
+        self,
+        *,
+        user_id: UUID,
+        event_id: UUID,
+    ) -> InteractionEvent | None:
+        if (user_id, event_id) != (self.event.user_id, self.event.id):
+            return None
+        self.event = replace(self.event, status=EventStatus.DISABLED)
+        return self.event
+
+    async def enable(self, **_: object) -> InteractionEvent | None:
+        return None
 
 
 def resolved_user(user_id: UUID) -> ResolvedUser:
@@ -71,6 +114,10 @@ def resolved_user(user_id: UUID) -> ResolvedUser:
         subscription_status=SubscriptionStatus.ACTIVE,
         subscription_valid_until=None,
         subscription_synced_at=NOW,
+        subscription_period=SubscriptionPeriod(
+            datetime(2026, 8, 1, tzinfo=timezone.utc),
+            datetime(2026, 9, 1, tzinfo=timezone.utc),
+        ),
         created_at=NOW,
         updated_at=NOW,
     )
@@ -92,6 +139,7 @@ def test_tool_access_matrix_and_lazy_sheets_configuration() -> None:
     event_repository = cast(EventRepository, object())
     event_tools = EventToolDependencies(
         repository=event_repository,
+        interactions=cast(InteractionEventService, FakeInteractions()),
         notification_quotas=cast(EventNotificationQuotaService, object()),
     )
     incomplete_settings = LegacyGoogleSheetsSettings(
@@ -176,6 +224,7 @@ def test_tool_filter_uses_complete_terms_and_falls_back_to_all_families() -> Non
         expense_repository=cast(ExpenseRepository, object()),
         event_tools=EventToolDependencies(
             repository=cast(EventRepository, object()),
+            interactions=cast(InteractionEventService, FakeInteractions()),
             notification_quotas=cast(EventNotificationQuotaService, object()),
         ),
     ).inject(
@@ -191,10 +240,38 @@ def test_tool_filter_uses_complete_terms_and_falls_back_to_all_families() -> Non
     assert "create_event" in names
 
 
+def test_scheduled_tools_include_only_authorized_reads() -> None:
+    injector = create_tools_injector(
+        LegacyGoogleSheetsSettings(_env_file=None),
+        expense_repository=cast(ExpenseRepository, object()),
+        event_tools=EventToolDependencies(
+            repository=cast(EventRepository, object()),
+            interactions=cast(InteractionEventService, FakeInteractions()),
+            notification_quotas=cast(EventNotificationQuotaService, object()),
+        ),
+    )
+    store = injector.inject_scheduled(
+        ToolInjectionContext(
+            resolved_user=resolved_user(uuid4()),
+            prompt="Scheduled wake-up",
+            timezone="UTC",
+        ),
+    )
+
+    assert {tool.name for tool in store.tools} == {
+        "list_events",
+        "list_expenses",
+        "summarize_expenses",
+    }
+    with pytest.raises(ToolUnavailableError):
+        store.get("create_event")
+
+
 def test_event_tools_expose_plan_notification_allowance() -> None:
     store = create_tools_injector(
         event_tools=EventToolDependencies(
             repository=cast(EventRepository, EmptyEventRepository()),
+            interactions=cast(InteractionEventService, FakeInteractions()),
             notification_quotas=cast(
                 EventNotificationQuotaService,
                 FakeNotificationQuotas(),
@@ -225,10 +302,57 @@ def test_event_tools_expose_plan_notification_allowance() -> None:
     for tool_result in (result, mutation_result):
         assert isinstance(tool_result.result, Mapping)
         assert tool_result.result["notification_quota"] == {
-            "monthly_limit": 60,
+            "period_limit": 60,
             "remaining": 59,
-            "resets_at": "2026-09-01T00:00:00Z",
+            "period_ends_at": "2026-09-01T00:00:00Z",
         }
+
+
+def test_interaction_event_can_be_disabled_but_not_deleted() -> None:
+    user = resolved_user(uuid4())
+    interaction = InteractionEvent(
+        id=uuid4(),
+        user_id=user.user.id,
+        status=EventStatus.ACTIVE,
+        last_user_message_at=NOW,
+        last_agent_message_at=NOW,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    lifecycle = FakeInteractionLifecycle(interaction)
+    store = create_tools_injector(
+        event_tools=EventToolDependencies(
+            repository=cast(EventRepository, EmptyEventRepository()),
+            interactions=cast(InteractionEventService, lifecycle),
+            notification_quotas=cast(
+                EventNotificationQuotaService,
+                FakeNotificationQuotas(),
+            ),
+        ),
+    ).inject(
+        ToolInjectionContext(
+            resolved_user=user,
+            prompt="Disable my interaction event",
+            timezone="UTC",
+        ),
+    )
+
+    deleted = asyncio.run(
+        store.get("delete_event").handler(
+            EventIdentifierArgs(event_id=interaction.id),
+        ),
+    )
+    disabled = asyncio.run(
+        store.get("disable_event").handler(
+            EventIdentifierArgs(event_id=interaction.id),
+        ),
+    )
+
+    assert isinstance(deleted.result, Mapping)
+    assert deleted.result["ok"] is False
+    assert isinstance(disabled.result, Mapping)
+    assert disabled.result["ok"] is True
+    assert lifecycle.event.status is EventStatus.DISABLED
 
 
 def test_google_sheets_client_rechecks_uuid_before_write() -> None:

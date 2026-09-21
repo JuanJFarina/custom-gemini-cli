@@ -14,6 +14,7 @@ from google.genai.types import (
 )
 from pydantic import BaseModel, ConfigDict
 
+from harle_domain.conversations.ports import ScheduledConversationStore
 from harle_domain.messaging import MediaContent
 from harle_domain.tools.models import (
     InternalToolCallInteraction,
@@ -100,6 +101,25 @@ class Harle(BaseModel):
             response_text=run_result.response_text,
             model=self.config.model,
             telegram_update_ids=telegram_update_ids,
+        )
+
+    async def save_scheduled(
+        self,
+        *,
+        run_result: HarleRunResult,
+    ) -> None:
+        conversation_store = self.stores.conversation_store
+        if not isinstance(conversation_store, ScheduledConversationStore):
+            raise TypeError("Conversation store cannot persist scheduled messages.")
+        for interaction_index, interaction in enumerate(run_result.tool_interactions):
+            await self.stores.conversation_store.save_tool_call(
+                interaction=interaction,
+                interaction_index=interaction_index,
+                model=self.config.model,
+            )
+        await conversation_store.save_scheduled(
+            response_text=run_result.response_text,
+            model=self.config.model,
         )
 
     async def _reason_and_act(

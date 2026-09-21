@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class ConversationRecord:
-    prompt: str
+    prompt: str | None
     response: str
     created_at: str
     kind: str
