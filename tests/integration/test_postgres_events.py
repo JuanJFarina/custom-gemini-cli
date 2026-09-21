@@ -90,7 +90,7 @@ async def verify_event_isolation(database_url: str) -> None:
                 description="Private",
                 schedule=TimedEventSchedule(
                     starts_at=datetime(2026, 9, 1, 10),
-                    ends_at=datetime(2026, 9, 1, 11),
+                    ends_at=datetime(2026, 9, 1, 10, 1),
                     timezone_name="UTC",
                 ),
             ),

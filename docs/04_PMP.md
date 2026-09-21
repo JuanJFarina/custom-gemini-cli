@@ -103,7 +103,7 @@ Implemented baseline:
 
 - Internal events have `user_event` and `system_event` types, active and disabled states, permanent deletion, a notification window, and `last_notified_at`.
 - Events may remain one-time or repeat forever through one `week_days` or `month_days` rule without materialized occurrence rows.
-- A process-local `AgentsScheduler` runs every five minutes, derives unnotified local occurrences from their notification-window start until their end, wakes the owning active user's agent without modifying tools or consuming conversation quota, and records successful delivery. Notification lead defaults to zero minutes.
+- A process-local `AgentsScheduler` runs every five minutes, derives unnotified local occurrences from their notification-window start until one hour after their end, wakes the owning active user's agent without modifying tools or consuming conversation quota, and records successful delivery. Notification lead defaults to zero minutes.
 - Supported Telegram images, voice notes, and audio files reach Gemini as native content parts. Current media is attached automatically and the ten newest references remain available through a read-only tool for twelve hours on a best-effort basis.
 - Delivered ordinary and interaction-event messages are persisted as standalone assistant messages, including read-only tool interactions, without fabricated user prompts or conversation-quota usage.
 - Scheduled runs receive shared profiles, conversation context, current time and weather, Google Search grounding, and every authorized read-only tool while modifying tools are absent from the runtime store.

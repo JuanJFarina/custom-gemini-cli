@@ -110,6 +110,7 @@ def test_recurrence_range_and_notification_use_virtual_occurrences() -> None:
         interval=interval,
         rule=rule,
         notify_before=timedelta(minutes=15),
+        notification_grace_period=timedelta(hours=1),
         last_notified_at=None,
         current_time=current_time,
     )
@@ -120,6 +121,7 @@ def test_recurrence_range_and_notification_use_virtual_occurrences() -> None:
             interval=interval,
             rule=rule,
             notify_before=timedelta(minutes=15),
+            notification_grace_period=timedelta(hours=1),
             last_notified_at=current_time,
             current_time=datetime(2026, 9, 8, 0, tzinfo=timezone.utc),
         )
@@ -134,11 +136,43 @@ def test_recurrence_range_and_notification_use_virtual_occurrences() -> None:
         interval=overnight,
         rule=WeeklyRecurrence(frozenset({WeekDay.MONDAY})),
         notify_before=timedelta(0),
+        notification_grace_period=timedelta(hours=1),
         last_notified_at=None,
         current_time=datetime(2026, 9, 8, 0, 30, tzinfo=timezone.utc),
     )
     assert ongoing is not None
     assert ongoing.starts_at == datetime(2026, 9, 7, 23, tzinfo=timezone.utc)
+
+
+def test_recurring_notification_has_one_hour_grace_period() -> None:
+    interval = timed_event_interval(
+        starts_at=datetime(2026, 9, 1, 23, 58),
+        ends_at=datetime(2026, 9, 1, 23, 59),
+        timezone_name="UTC",
+    )
+    rule = WeeklyRecurrence(frozenset({WeekDay.TUESDAY}))
+    grace_period = timedelta(hours=1)
+
+    due = due_recurrence_interval(
+        interval=interval,
+        rule=rule,
+        notify_before=timedelta(0),
+        notification_grace_period=grace_period,
+        last_notified_at=None,
+        current_time=datetime(2026, 9, 2, 0, 30, tzinfo=timezone.utc),
+    )
+    expired = due_recurrence_interval(
+        interval=interval,
+        rule=rule,
+        notify_before=timedelta(0),
+        notification_grace_period=grace_period,
+        last_notified_at=None,
+        current_time=datetime(2026, 9, 2, 0, 59, tzinfo=timezone.utc),
+    )
+
+    assert due is not None
+    assert due.starts_at == datetime(2026, 9, 1, 23, 58, tzinfo=timezone.utc)
+    assert expired is None
 
 
 class FakeEventRepository:
@@ -197,6 +231,7 @@ class FakeEventRepository:
         self,
         *,
         current_time: datetime,
+        notification_grace_period: timedelta,
         limit: int,
     ) -> Sequence[InternalEvent]:
         due = [
@@ -207,7 +242,9 @@ class FakeEventRepository:
                 event.recurrence_rule is not None
                 or (
                     event.last_notified_at is None
-                    and event.notification_window_start <= current_time < event.ends_at
+                    and event.notification_window_start
+                    <= current_time
+                    < event.ends_at + notification_grace_period
                 )
             )
         ]
@@ -309,6 +346,42 @@ class FakeEventRepository:
             return None
         del self.events[event_id]
         return current
+
+
+def test_one_time_notification_has_one_hour_grace_period() -> None:
+    async def verify() -> None:
+        repository = FakeEventRepository()
+        owner_id = uuid4()
+        event = await EventService(
+            repository,
+            clock=lambda: datetime(2026, 9, 1, 12, tzinfo=timezone.utc),
+        ).create(
+            user_id=owner_id,
+            event=CreateEvent(
+                title="Short event",
+                description="",
+                schedule=TimedEventSchedule(
+                    starts_at=datetime(2026, 9, 1, 11),
+                    ends_at=datetime(2026, 9, 1, 11, 1),
+                    timezone_name="UTC",
+                ),
+            ),
+        )
+        within_grace = EventService(
+            repository,
+            clock=lambda: datetime(2026, 9, 1, 12, tzinfo=timezone.utc),
+        )
+        expired = EventService(
+            repository,
+            clock=lambda: datetime(2026, 9, 1, 12, 1, tzinfo=timezone.utc),
+        )
+
+        assert [due.id for due in await within_grace.list_due_for_notification()] == [
+            event.id,
+        ]
+        assert not await expired.list_due_for_notification()
+
+    asyncio.run(verify())
 
 
 def test_event_intervals_convert_local_and_all_day_boundaries() -> None:

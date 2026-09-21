@@ -21,6 +21,7 @@ from harle_domain.events import (
 )
 
 DEFAULT_NOTIFICATION_LEAD = timedelta(0)
+DEFAULT_NOTIFICATION_GRACE_PERIOD = timedelta(hours=1)
 DEFAULT_DUE_EVENT_LIMIT = 100
 
 
@@ -248,6 +249,7 @@ class EventService:
         current_time = self._now()
         candidates = await self.repository.list_due_for_notification(
             current_time=current_time,
+            notification_grace_period=DEFAULT_NOTIFICATION_GRACE_PERIOD,
             limit=limit,
         )
         due_events: list[InternalEvent] = []
@@ -333,6 +335,7 @@ class EventService:
             interval=event.details.interval,
             rule=recurrence_rule,
             notify_before=notification_lead,
+            notification_grace_period=DEFAULT_NOTIFICATION_GRACE_PERIOD,
             last_notified_at=event.last_notified_at,
             current_time=current_time,
         )

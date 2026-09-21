@@ -106,11 +106,14 @@ def due_recurrence_interval(
     interval: EventInterval,
     rule: RecurrenceRule,
     notify_before: timedelta,
+    notification_grace_period: timedelta,
     last_notified_at: datetime | None,
     current_time: datetime,
 ) -> EventInterval | None:
     if notify_before < timedelta(0):
         raise ValueError("Event notification lead cannot be negative.")
+    if notification_grace_period < timedelta(0):
+        raise ValueError("Event notification grace period cannot be negative.")
     _require_aware(current_time, "Current time")
     if last_notified_at is not None:
         _require_aware(last_notified_at, "Last notification time")
@@ -121,7 +124,8 @@ def due_recurrence_interval(
     deadline = current_time + notify_before
     local_date = max(
         anchor_start.date(),
-        current_time.astimezone(timezone_info).date() - timedelta(days=day_span),
+        (current_time - notification_grace_period).astimezone(timezone_info).date()
+        - timedelta(days=day_span),
     )
     last_date = deadline.astimezone(timezone_info).date()
     while local_date <= last_date:
@@ -135,7 +139,11 @@ def due_recurrence_interval(
             not_already_notified = (
                 last_notified_at is None or last_notified_at < window_start
             )
-            if window_start <= current_time < occurrence.ends_at:
+            if (
+                window_start
+                <= current_time
+                < occurrence.ends_at + notification_grace_period
+            ):
                 if not_already_notified:
                     return occurrence
         local_date += timedelta(days=1)

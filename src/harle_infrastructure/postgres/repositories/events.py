@@ -1,7 +1,7 @@
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated, TypeVar
 from uuid import UUID
 
@@ -182,10 +182,13 @@ class PostgresEventRepository:
         self,
         *,
         current_time: datetime,
+        notification_grace_period: timedelta,
         limit: int,
     ) -> Sequence[InternalEvent]:
         if current_time.tzinfo is None or current_time.utcoffset() is None:
             raise ValueError("Current time must include a timezone.")
+        if notification_grace_period < timedelta(0):
+            raise ValueError("Notification grace period cannot be negative.")
         if limit <= 0:
             raise ValueError("Due event limit must be positive.")
         async with self.pool.acquire() as connection:
@@ -198,7 +201,7 @@ class PostgresEventRepository:
                         AND recurrence_rule IS NULL
                         AND last_notified_at IS NULL
                         AND notification_window_start <= $1
-                        AND ends_at > $1
+                        AND ends_at + $3 > $1
                     ORDER BY notification_window_start, starts_at, id
                     LIMIT $2
                 )
@@ -213,6 +216,7 @@ class PostgresEventRepository:
                 """,
                 current_time,
                 limit,
+                notification_grace_period,
             )
         return [_event_from_row(row) for row in rows]
 

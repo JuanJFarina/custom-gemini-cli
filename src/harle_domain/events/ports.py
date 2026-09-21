@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
@@ -36,6 +36,7 @@ class EventRepository(Protocol):
         self,
         *,
         current_time: datetime,
+        notification_grace_period: timedelta,
         limit: int,
     ) -> Sequence[InternalEvent]: ...
 

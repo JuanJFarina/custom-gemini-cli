@@ -182,7 +182,7 @@ erDiagram
 - Notification windows may start at the event anchor or earlier. Both event types default to a zero-minute lead, and positive values configure a pre-start lead.
 - `recurrence_rule` is absent for a one-time event or contains one non-empty `week_days` or `month_days` list. Recurrence is infinite and creates no occurrence rows.
 - A recurring event preserves the ordinary event schedule and fields. A missing month day produces no occurrence in that month.
-- Successful notification delivery updates `last_notified_at`; failure leaves it unchanged so delivery remains eligible until the occurrence ends.
+- Successful notification delivery updates `last_notified_at`; failure leaves it unchanged so delivery remains eligible until one hour after the occurrence ends.
 - Disabling is reversible and suppresses occurrences and notifications. Deletion permanently removes the event.
 
 ## Indexes and Constraints
