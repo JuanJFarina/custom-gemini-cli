@@ -132,6 +132,7 @@ class InteractionEventRepository(Protocol):
         *,
         limit: int,
         user_message_from: datetime,
+        current_time: datetime,
     ) -> Sequence[InteractionEvent]: ...
 
     async def disable(

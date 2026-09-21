@@ -36,8 +36,8 @@ This document distinguishes the implemented controlled-beta baseline from target
 - Supported Telegram images, voice notes, and audio files are sent directly to Gemini. The ten newest user-owned Telegram references remain available through a read-only tool for twelve hours on a best-effort process-local basis.
 - Telegram updates are persisted and deduplicated before assistant execution. Consecutive messages may join a turn until tool execution or delivery begins.
 - The tenth valid message within two seconds triggers a per-identity cooldown. Cooldowns escalate from 60 seconds to 5 minutes and then 1 hour, and strikes decay after normal use.
-- Monthly quotas currently count successful completed conversations within UTC calendar-month boundaries and include process-local in-flight reservations. Configured plan limits, rather than application constants, determine allowance.
-- Runtime authorization for inferred writes, action audits, durable work queues, automated subscription-period synchronization, privacy workflows, scheduled-message persistence, interaction events, and multi-user Google integrations remain pending.
+- Manually provisioned exact subscription-period boundaries define conversation and event-notification allowances. Completed conversations and successful ordinary event deliveries use separate configured plan limits with process-local in-flight reservations.
+- Runtime authorization for inferred writes, action audits, durable work queues, automated external subscription synchronization, privacy workflows, and multi-user Google integrations remain pending.
 
 ## User Requirements
 
@@ -201,7 +201,7 @@ This document distinguishes the implemented controlled-beta baseline from target
 
 ### Runtime Architecture
 
-- **FR-55**: The controlled-beta runtime shall support request-triggered Telegram runs and process-local scheduled event-notification runs. The target process-local scheduler shall also evaluate interaction events under FR-112 through FR-120.
+- **FR-55**: The controlled-beta runtime shall support request-triggered Telegram runs and process-local scheduled ordinary and interaction-event runs under FR-112 through FR-120.
 - **FR-56**: The scheduler shall select interaction events per user only after ordinary event work, using the event's active state, the seven-day user-inactivity cutoff, latest contact, and bounded probability rule. Interaction events require no quiet-period evaluation.
 - **FR-57**: A scheduled run shall load the owning user's conversations, profiles, and relevant external context without consuming conversation quota. Its runtime tool store shall contain all authorized read-only tools and no modifying tools. Ordinary event notifications shall reserve event-notification allowance before Gemini; interaction events shall not reserve either allowance.
 - **FR-58**: The target broad-release runtime shall use durable background queues for accepted inbound work and outbound delivery. Future scheduler work, proposed actions, and integration polling shall also use durable queues when work must survive interruptions.
@@ -268,23 +268,15 @@ The implemented scheduled-event flow is:
 
 1. `AgentsScheduler` runs every five minutes.
 2. It selects active one-time events with an open notification window and active recurring definitions that may produce a due occurrence.
-3. The runtime resolves the owning active user's Telegram identity and builds the user's request-scoped stores and context providers.
-4. Harle receives each event as agenda context for a user event or scheduled task context for a system event.
-5. Harle generates a concise notification without modifying tools or a conversation-quota reservation.
-6. Harle sends the notification to the user's private Telegram chat.
-7. Successful delivery updates `last_notified_at`. Failed delivery remains eligible until the occurrence ends.
+3. The runtime resolves the owning active user's Telegram identity, exact subscription period, separate notification allowance, stores, and context providers.
+4. It reserves notification capacity before Gemini. A blocked occurrence does not reach Gemini or update `last_notified_at`, and at most one static quota notice is sent for the user and period.
+5. Harle receives each event as agenda or scheduled-task context together with profiles, conversation history, current context, Google Search grounding, and every authorized read-only tool. Modifying tools are absent.
+6. Harle sends the notification to the user's private Telegram chat, persists it and any read-only tool interactions without a fabricated prompt, records successful quota usage and assistant contact, and updates `last_notified_at`.
+7. Failed generation, delivery, or scheduled-message persistence consumes no allowance and remains eligible under the ordinary notification window policy.
 
-This is a special scheduler entrypoint rather than a synthetic inbound user request. It bypasses Telegram intake, aggregation, deduplication, request rate limiting, and conversation-quota admission while reusing the same core agent, profiles, conversation loading, current context, Gemini model, and reason-and-act loop. The current path passes no application tools, still permits Gemini Google Search grounding and weather retrieval, and does not persist the delivered notification in conversation history.
+This scheduler entrypoint is not a synthetic inbound user request. It bypasses Telegram intake, aggregation, deduplication, request rate limiting, and conversation-quota admission while reusing the core agent and user-scoped runtime.
 
-The target scheduled-event flow extends this behavior:
-
-1. After resolving the active user, Harle loads the exact synchronized subscription period and the plan's separate notification allowance.
-2. It reserves capacity against successful deliveries and in-flight notification work for that period.
-3. An admitted occurrence reaches Gemini with authorized read-only capabilities and consumes allowance only after successful Telegram delivery.
-4. A blocked occurrence does not reach Gemini or update `last_notified_at`. Harle sends at most one static quota notice for that user and subscription period.
-5. A delivered notification and its read-only tool interactions are persisted as a standalone assistant message without a fabricated user prompt.
-
-The target interaction-event flow is:
+The implemented interaction-event flow is:
 
 1. After ordinary due-event candidates are selected, the scheduler identifies users with no due `user_event` or `system_event` in the current pass.
 2. For each such user, it loads the single interaction event and continues only when the event and subscription are active.

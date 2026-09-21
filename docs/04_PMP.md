@@ -105,16 +105,14 @@ Implemented baseline:
 - Events may remain one-time or repeat forever through one `week_days` or `month_days` rule without materialized occurrence rows.
 - A process-local `AgentsScheduler` runs every five minutes, derives unnotified local occurrences from their notification-window start until their end, wakes the owning active user's agent without modifying tools or consuming conversation quota, and records successful delivery. Notification lead defaults to zero minutes.
 - Supported Telegram images, voice notes, and audio files reach Gemini as native content parts. Current media is attached automatically and the ten newest references remain available through a read-only tool for twelve hours on a best-effort basis.
+- Delivered ordinary and interaction-event messages are persisted as standalone assistant messages, including read-only tool interactions, without fabricated user prompts or conversation-quota usage.
+- Scheduled runs receive shared profiles, conversation context, current time and weather, Google Search grounding, and every authorized read-only tool while modifying tools are absent from the runtime store.
+- Every user owns one non-deletable active or disabled `interaction_event` with no fixed schedule or recurrence. It is evaluated only when the same user has no due ordinary event in the scheduler pass.
+- Interaction events use the interval-independent shape-2, 96-hour Weibull policy from the latest user or successful assistant contact. They stop after seven days without an actual user message, automatically resume when the user returns, require no pending response, and use neither quota nor a quiet period.
 
 Remaining goals:
 
 - Add user-controlled memory and profile inspection, correction, refinement, and deletion.
-- Persist delivered ordinary event notifications as standalone assistant messages, including read-only tool interactions, without fabricating user prompts or consuming conversation quota.
-- Give every scheduled run the shared agent context, Google Search, and authorized read-only tools while excluding modifying tools from its runtime store.
-- Provision exactly one `interaction_event` per user. It has no fixed schedule or recurrence, can be disabled and re-enabled but not deleted, and is evaluated only after the same user has no due `user_event` or `system_event` in a scheduler pass.
-- Implement the calm interaction policy as a shape-2 Weibull probability with a 96-hour scale, calculated from the later of the latest user message and latest successful assistant delivery and independently of scheduler interval.
-- Stop interaction messages after seven days without an actual user message, automatically resume eligibility when the user returns, reset probability after every successful assistant delivery, and do not wait for a user response.
-- Apply no quiet period and no conversation or event-notification quota to interaction runs.
 - Add optional quiet periods for ordinary event notifications only if later product policy requires them.
 - Add an authorized agent tool that invokes a controlled Google expense and calendar import or synchronization service.
 - Add multi-user Google Sheets and Google Calendar through least-privilege OAuth.

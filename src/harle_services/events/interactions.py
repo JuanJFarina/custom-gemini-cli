@@ -31,9 +31,11 @@ class InteractionEventService:
         *,
         limit: int = DEFAULT_INTERACTION_EVENT_LIMIT,
     ) -> Sequence[InteractionEvent]:
+        current_time = self._now()
         return await self.repository.list_active(
             limit=limit,
-            user_message_from=self._now() - MAX_USER_INACTIVITY,
+            user_message_from=current_time - MAX_USER_INACTIVITY,
+            current_time=current_time,
         )
 
     async def disable(

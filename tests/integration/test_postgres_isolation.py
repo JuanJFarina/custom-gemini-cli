@@ -138,6 +138,36 @@ async def verify_isolation(database_url: str) -> None:
         )
         assert interaction is not None
         assert interaction.last_user_message_at is not None
+        current_time = datetime.now(timezone.utc)
+        eligible = await interactions.list_active(
+            limit=10,
+            user_message_from=current_time - timedelta(days=7),
+            current_time=current_time,
+        )
+        assert [event.user_id for event in eligible] == [first_id]
+        async with pool.acquire() as connection:
+            await connection.execute(
+                """
+                UPDATE users
+                SET subscription_status = 'inactive'
+                WHERE id = $1
+                """,
+                first_id,
+            )
+        assert not await interactions.list_active(
+            limit=10,
+            user_message_from=current_time - timedelta(days=7),
+            current_time=current_time,
+        )
+        async with pool.acquire() as connection:
+            await connection.execute(
+                """
+                UPDATE users
+                SET subscription_status = 'active'
+                WHERE id = $1
+                """,
+                first_id,
+            )
         agent_time = datetime.now(timezone.utc) + timedelta(seconds=1)
         interaction = await interactions.record_agent_message(
             user_id=first_id,

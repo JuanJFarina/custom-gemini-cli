@@ -45,24 +45,48 @@ class PostgresInteractionEventRepository:
         *,
         limit: int,
         user_message_from: datetime,
+        current_time: datetime,
     ) -> Sequence[InteractionEvent]:
         if limit <= 0:
             raise ValueError("Interaction event limit must be positive.")
         async with self.pool.acquire() as connection:
             rows = await connection.fetch(
-                f"""
-                SELECT {INTERACTION_EVENT_COLUMNS}
-                FROM interaction_events
-                WHERE status = 'active'
-                    AND last_user_message_at >= $2
+                """
+                SELECT
+                    interactions.id,
+                    interactions.user_id,
+                    interactions.status,
+                    interactions.last_user_message_at,
+                    interactions.last_agent_message_at,
+                    interactions.created_at,
+                    interactions.updated_at
+                FROM interaction_events AS interactions
+                JOIN users AS owners
+                    ON owners.id = interactions.user_id
+                JOIN plans
+                    ON plans.code = owners.plan_code
+                WHERE interactions.status = 'active'
+                    AND interactions.last_user_message_at >= $2
+                    AND owners.subscription_status = 'active'
+                    AND (
+                        owners.subscription_valid_until IS NULL
+                        OR owners.subscription_valid_until > $3
+                    )
+                    AND owners.subscription_period_starts_at <= $3
+                    AND owners.subscription_period_ends_at > $3
+                    AND plans.active
                 ORDER BY GREATEST(
-                    last_user_message_at,
-                    COALESCE(last_agent_message_at, last_user_message_at)
-                ), id
+                    interactions.last_user_message_at,
+                    COALESCE(
+                        interactions.last_agent_message_at,
+                        interactions.last_user_message_at
+                    )
+                ), interactions.id
                 LIMIT $1
                 """,
                 limit,
                 user_message_from,
+                current_time,
             )
         return [_event_from_row(row) for row in rows]
 
