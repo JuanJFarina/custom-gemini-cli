@@ -11,6 +11,7 @@ from harle_domain.events import (
     EventType,
     InternalEvent,
     MonthlyRecurrence,
+    NotificationTiming,
     WeekDay,
     WeeklyRecurrence,
     all_day_event_interval,
@@ -109,8 +110,10 @@ def test_recurrence_range_and_notification_use_virtual_occurrences() -> None:
     due = due_recurrence_interval(
         interval=interval,
         rule=rule,
-        notify_before=timedelta(minutes=15),
-        notification_grace_period=timedelta(hours=1),
+        timing=NotificationTiming(
+            notify_before=timedelta(minutes=15),
+            grace_period=timedelta(hours=1),
+        ),
         last_notified_at=None,
         current_time=current_time,
     )
@@ -120,8 +123,10 @@ def test_recurrence_range_and_notification_use_virtual_occurrences() -> None:
         due_recurrence_interval(
             interval=interval,
             rule=rule,
-            notify_before=timedelta(minutes=15),
-            notification_grace_period=timedelta(hours=1),
+            timing=NotificationTiming(
+                notify_before=timedelta(minutes=15),
+                grace_period=timedelta(hours=1),
+            ),
             last_notified_at=current_time,
             current_time=datetime(2026, 9, 8, 0, tzinfo=timezone.utc),
         )
@@ -135,8 +140,10 @@ def test_recurrence_range_and_notification_use_virtual_occurrences() -> None:
     ongoing = due_recurrence_interval(
         interval=overnight,
         rule=WeeklyRecurrence(frozenset({WeekDay.MONDAY})),
-        notify_before=timedelta(0),
-        notification_grace_period=timedelta(hours=1),
+        timing=NotificationTiming(
+            notify_before=timedelta(0),
+            grace_period=timedelta(hours=1),
+        ),
         last_notified_at=None,
         current_time=datetime(2026, 9, 8, 0, 30, tzinfo=timezone.utc),
     )
@@ -156,16 +163,20 @@ def test_recurring_notification_has_one_hour_grace_period() -> None:
     due = due_recurrence_interval(
         interval=interval,
         rule=rule,
-        notify_before=timedelta(0),
-        notification_grace_period=grace_period,
+        timing=NotificationTiming(
+            notify_before=timedelta(0),
+            grace_period=grace_period,
+        ),
         last_notified_at=None,
         current_time=datetime(2026, 9, 2, 0, 30, tzinfo=timezone.utc),
     )
     expired = due_recurrence_interval(
         interval=interval,
         rule=rule,
-        notify_before=timedelta(0),
-        notification_grace_period=grace_period,
+        timing=NotificationTiming(
+            notify_before=timedelta(0),
+            grace_period=grace_period,
+        ),
         last_notified_at=None,
         current_time=datetime(2026, 9, 2, 0, 59, tzinfo=timezone.utc),
     )

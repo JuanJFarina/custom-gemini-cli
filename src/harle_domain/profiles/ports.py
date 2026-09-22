@@ -1,7 +1,11 @@
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
-from harle_domain.profiles.models import AssistantProfile, UserProfile
+from harle_domain.profiles.models import (
+    AssistantProfile,
+    InteractionFrequency,
+    UserProfile,
+)
 
 
 @runtime_checkable
@@ -26,3 +30,10 @@ class AssistantProfileRepository(Protocol):
         user_id: UUID,
         profile: AssistantProfile,
     ) -> AssistantProfile: ...
+
+    async def update_interaction_frequency(
+        self,
+        *,
+        user_id: UUID,
+        frequency: InteractionFrequency,
+    ) -> AssistantProfile | None: ...

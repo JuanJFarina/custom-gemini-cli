@@ -22,6 +22,11 @@ from harle_domain.events import (
     InternalEvent,
 )
 from harle_domain.expenses import ExpenseRepository
+from harle_domain.profiles import (
+    AssistantProfile,
+    AssistantProfileRepository,
+    InteractionFrequency,
+)
 from harle_infrastructure.google_sheets import (
     GoogleSheetsClient,
     GoogleSheetsConnectionSettings,
@@ -35,6 +40,10 @@ from harle_services.events import (
 )
 from harle_services.tools import ToolInjectionContext
 from harle_services.tools.internal_events import EventIdentifierArgs, ListEventsArgs
+from harle_services.tools.internal_profiles import (
+    GetInteractionFrequencyArgs,
+    SetInteractionFrequencyArgs,
+)
 from harle_utils import ToolAccessDeniedError, ToolUnavailableError
 
 NOW = datetime(2026, 8, 31, tzinfo=timezone.utc)
@@ -96,6 +105,40 @@ class FakeInteractionLifecycle:
 
     async def enable(self, **_: object) -> InteractionEvent | None:
         return None
+
+
+class FakeAssistantProfiles:
+    def __init__(self, profile: AssistantProfile) -> None:
+        self.profile = profile
+
+    async def get(self, *, user_id: UUID) -> AssistantProfile | None:
+        return self.profile if user_id == self.profile.user_id else None
+
+    async def save(
+        self,
+        *,
+        user_id: UUID,
+        profile: AssistantProfile,
+    ) -> AssistantProfile:
+        if user_id != profile.user_id:
+            raise ValueError
+        self.profile = profile
+        return profile
+
+    async def update_interaction_frequency(
+        self,
+        *,
+        user_id: UUID,
+        frequency: InteractionFrequency,
+    ) -> AssistantProfile | None:
+        if user_id != self.profile.user_id:
+            return None
+        self.profile = replace(
+            self.profile,
+            interaction_frequency=frequency,
+            updated_at=NOW,
+        )
+        return self.profile
 
 
 def resolved_user(user_id: UUID) -> ResolvedUser:
@@ -353,6 +396,71 @@ def test_interaction_event_can_be_disabled_but_not_deleted() -> None:
     assert isinstance(disabled.result, Mapping)
     assert disabled.result["ok"] is True
     assert lifecycle.event.status is EventStatus.DISABLED
+
+
+def test_interaction_frequency_tools_read_update_and_exclude_scheduled_writes() -> None:
+    user = resolved_user(uuid4())
+    profiles = FakeAssistantProfiles(
+        AssistantProfile(
+            user_id=user.user.id,
+            display_name="Harle",
+            profile_text="Personal assistant",
+            interaction_frequency=InteractionFrequency.HIGH,
+            created_at=NOW,
+            updated_at=NOW,
+        ),
+    )
+    injector = create_tools_injector(
+        expense_repository=cast(ExpenseRepository, object()),
+        event_tools=EventToolDependencies(
+            repository=cast(EventRepository, EmptyEventRepository()),
+            interactions=cast(InteractionEventService, FakeInteractions()),
+            notification_quotas=cast(
+                EventNotificationQuotaService,
+                FakeNotificationQuotas(),
+            ),
+        ),
+        assistant_profile_repository=cast(AssistantProfileRepository, profiles),
+    )
+    store = injector.inject(
+        ToolInjectionContext(
+            resolved_user=user,
+            prompt="Set my interaction frequency to low",
+            timezone="UTC",
+        ),
+    )
+
+    current = asyncio.run(
+        store.get("get_interaction_frequency").handler(
+            GetInteractionFrequencyArgs(),
+        ),
+    )
+    updated = asyncio.run(
+        store.get("set_interaction_frequency").handler(
+            SetInteractionFrequencyArgs(
+                interaction_frequency=InteractionFrequency.LOW,
+            ),
+        ),
+    )
+    scheduled = injector.inject_scheduled(
+        ToolInjectionContext(
+            resolved_user=user,
+            prompt="Scheduled wake-up",
+            timezone="UTC",
+        ),
+    )
+
+    assert current.result == {
+        "interaction_frequency": "high",
+        "scale_hours": 12,
+    }
+    assert updated.result == {
+        "interaction_frequency": "low",
+        "scale_hours": 48,
+    }
+    assert scheduled.get("get_interaction_frequency")
+    with pytest.raises(ToolUnavailableError):
+        scheduled.get("set_interaction_frequency")
 
 
 def test_google_sheets_client_rechecks_uuid_before_write() -> None:

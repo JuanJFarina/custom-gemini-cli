@@ -88,14 +88,16 @@ class AgentsScheduler:
                     log.warning(
                         f"Event notification failed for event_id={event.id}: {type(exc).__name__}"
                     )
-            interaction_events = await self.interactions.list_active()
+            interaction_candidates = await self.interactions.list_active()
             scheduler_interval = timedelta(seconds=self.interval_seconds)
-            for interaction_event in interaction_events:
+            for candidate in interaction_candidates:
+                interaction_event = candidate.event
                 if interaction_event.user_id in users_with_due_events:
                     continue
                 if not self.interactions.should_trigger(
                     interaction_event,
                     scheduler_interval=scheduler_interval,
+                    scale=candidate.interaction_frequency.scale,
                 ):
                     continue
                 try:

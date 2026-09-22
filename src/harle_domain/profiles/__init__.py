@@ -1,4 +1,8 @@
-from harle_domain.profiles.models import AssistantProfile, UserProfile
+from harle_domain.profiles.models import (
+    AssistantProfile,
+    InteractionFrequency,
+    UserProfile,
+)
 from harle_domain.profiles.ports import (
     AssistantProfileRepository,
     UserProfileRepository,
@@ -7,6 +11,7 @@ from harle_domain.profiles.ports import (
 __all__ = [
     "AssistantProfile",
     "AssistantProfileRepository",
+    "InteractionFrequency",
     "UserProfile",
     "UserProfileRepository",
 ]

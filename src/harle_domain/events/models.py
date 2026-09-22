@@ -4,6 +4,8 @@ from enum import Enum
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from harle_domain.profiles import InteractionFrequency
+
 
 class EventStatus(str, Enum):
     ACTIVE = "active"
@@ -211,6 +213,12 @@ class InteractionEvent:
             if value is not None
         ]
         return max(contacts) if contacts else None
+
+
+@dataclass(frozen=True, slots=True)
+class InteractionEventCandidate:
+    event: InteractionEvent
+    interaction_frequency: InteractionFrequency
 
 
 def _require_utc(value: datetime, label: str) -> None:

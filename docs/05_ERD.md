@@ -63,6 +63,7 @@ erDiagram
         UUID user_id PK, FK
         TEXT display_name
         TEXT profile_text
+        TEXT interaction_frequency
         TIMESTAMPTZ created_at
         TIMESTAMPTZ updated_at
     }
@@ -153,6 +154,7 @@ erDiagram
 - Subscription status is `active`, `inactive`, `past_due`, `cancelled`, or `revoked`.
 - An external identity cannot belong to two users for the same provider and external identifier.
 - Profiles store user-owned personalization separately from conversation history.
+- Assistant interaction frequency is `high`, `medium`, or `low`, mapping to 12-hour, 24-hour, or 48-hour Weibull scales. New profiles default to `high`.
 - Latitude and longitude are both present or both absent. Timezones use IANA names.
 - Juan's Google Sheets privilege is deployment configuration keyed to his stable user UUID; it is not a database role or display-name property.
 

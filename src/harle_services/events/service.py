@@ -12,6 +12,7 @@ from harle_domain.events import (
     EventTimestamps,
     EventType,
     InternalEvent,
+    NotificationTiming,
     RecurrenceRule,
     all_day_event_interval,
     due_recurrence_interval,
@@ -334,8 +335,10 @@ class EventService:
         occurrence = due_recurrence_interval(
             interval=event.details.interval,
             rule=recurrence_rule,
-            notify_before=notification_lead,
-            notification_grace_period=DEFAULT_NOTIFICATION_GRACE_PERIOD,
+            timing=NotificationTiming(
+                notify_before=notification_lead,
+                grace_period=DEFAULT_NOTIFICATION_GRACE_PERIOD,
+            ),
             last_notified_at=event.last_notified_at,
             current_time=current_time,
         )

@@ -6,6 +6,7 @@ REQUIRED_COLUMNS = frozenset(
     {
         "assistant_profiles.created_at",
         "assistant_profiles.display_name",
+        "assistant_profiles.interaction_frequency",
         "assistant_profiles.profile_text",
         "assistant_profiles.updated_at",
         "assistant_profiles.user_id",

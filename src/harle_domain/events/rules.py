@@ -31,6 +31,18 @@ class EventRange:
             raise ValueError("Event range end must be on or after its start date.")
 
 
+@dataclass(frozen=True, slots=True)
+class NotificationTiming:
+    notify_before: timedelta
+    grace_period: timedelta
+
+    def __post_init__(self) -> None:
+        if self.notify_before < timedelta(0):
+            raise ValueError("Event notification lead cannot be negative.")
+        if self.grace_period < timedelta(0):
+            raise ValueError("Event notification grace period cannot be negative.")
+
+
 def recurs_on(rule: RecurrenceRule, local_date: date) -> bool:
     if isinstance(rule, WeeklyRecurrence):
         return WEEK_DAYS[local_date.weekday()] in rule.days
@@ -105,29 +117,24 @@ def due_recurrence_interval(
     *,
     interval: EventInterval,
     rule: RecurrenceRule,
-    notify_before: timedelta,
-    notification_grace_period: timedelta,
+    timing: NotificationTiming,
     last_notified_at: datetime | None,
     current_time: datetime,
 ) -> EventInterval | None:
-    if notify_before < timedelta(0):
-        raise ValueError("Event notification lead cannot be negative.")
-    if notification_grace_period < timedelta(0):
-        raise ValueError("Event notification grace period cannot be negative.")
     _require_aware(current_time, "Current time")
     if last_notified_at is not None:
         _require_aware(last_notified_at, "Last notification time")
     timezone_info = _timezone(interval.timezone)
     anchor_start = interval.starts_at.astimezone(timezone_info)
-    anchor_end = interval.ends_at.astimezone(timezone_info)
-    day_span = (anchor_end.date() - anchor_start.date()).days
-    deadline = current_time + notify_before
+    day_span = (
+        interval.ends_at.astimezone(timezone_info).date() - anchor_start.date()
+    ).days
     local_date = max(
         anchor_start.date(),
-        (current_time - notification_grace_period).astimezone(timezone_info).date()
+        (current_time - timing.grace_period).astimezone(timezone_info).date()
         - timedelta(days=day_span),
     )
-    last_date = deadline.astimezone(timezone_info).date()
+    last_date = (current_time + timing.notify_before).astimezone(timezone_info).date()
     while local_date <= last_date:
         occurrence = recurrence_interval(
             interval=interval,
@@ -135,15 +142,11 @@ def due_recurrence_interval(
             local_date=local_date,
         )
         if occurrence is not None:
-            window_start = occurrence.starts_at - notify_before
+            window_start = occurrence.starts_at - timing.notify_before
             not_already_notified = (
                 last_notified_at is None or last_notified_at < window_start
             )
-            if (
-                window_start
-                <= current_time
-                < occurrence.ends_at + notification_grace_period
-            ):
+            if window_start <= current_time < occurrence.ends_at + timing.grace_period:
                 if not_already_notified:
                     return occurrence
         local_date += timedelta(days=1)

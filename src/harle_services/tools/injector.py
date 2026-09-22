@@ -56,6 +56,21 @@ EVENT_TERMS = (
     "reunión",
     "reuniones",
 )
+PROFILE_TERMS = (
+    "interaction frequency",
+    "message frequency",
+    "proactive message",
+    "check in",
+    "frequency",
+    "interaction",
+    "profile",
+    "frecuencia de interacción",
+    "frecuencia de mensajes",
+    "mensaje proactivo",
+    "frecuencia",
+    "interacción",
+    "perfil",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +175,8 @@ def _relevant_families(
         )
     if _contains_any_term(normalized, EVENT_TERMS):
         selected.add(ToolFamily.INTERNAL_EVENTS)
+    if _contains_any_term(normalized, PROFILE_TERMS):
+        selected.add(ToolFamily.PROFILES)
     return frozenset(selected).intersection(authorized) if selected else authorized
 
 

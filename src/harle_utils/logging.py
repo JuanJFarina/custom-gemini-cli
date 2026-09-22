@@ -17,7 +17,7 @@ class LogLevel(str, Enum):
     DEBUG = "DEBUG"
 
 
-LogLevelAdapter = TypeAdapter(LogLevel)
+LOG_LEVEL_ADAPTER = TypeAdapter(LogLevel)
 
 
 def configure_logging(level: LogLevel) -> logging.Logger:
@@ -37,7 +37,7 @@ load_dotenv()
 LOG_LEVEL = os.getenv("HARLE_LOG_LEVEL")
 
 try:
-    log_level = LogLevelAdapter.validate_python(LOG_LEVEL or LogLevel.WARNING)
+    log_level = LOG_LEVEL_ADAPTER.validate_python(LOG_LEVEL or LogLevel.WARNING)
     log = configure_logging(log_level)
     log.info(f"Environment log level set to: {log_level.value}")
 

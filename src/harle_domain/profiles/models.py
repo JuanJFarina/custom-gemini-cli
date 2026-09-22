@@ -1,8 +1,23 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
+from enum import Enum
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+
+class InteractionFrequency(str, Enum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+    @property
+    def scale(self) -> timedelta:
+        if self is InteractionFrequency.HIGH:
+            return timedelta(hours=12)
+        if self is InteractionFrequency.MEDIUM:
+            return timedelta(hours=24)
+        return timedelta(hours=48)
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +59,7 @@ class UserProfile(_ProfileRecord):
 class AssistantProfile(_ProfileRecord):
     display_name: str
     profile_text: str
+    interaction_frequency: InteractionFrequency = InteractionFrequency.HIGH
 
     def __post_init__(self) -> None:
         _require_non_empty(
@@ -51,6 +67,8 @@ class AssistantProfile(_ProfileRecord):
             field_name="assistant display name",
         )
         _require_non_empty(self.profile_text, field_name="assistant profile")
+        if not isinstance(self.interaction_frequency, InteractionFrequency):
+            raise TypeError("Interaction frequency must be high, medium, or low.")
 
 
 def _require_non_empty(value: str, *, field_name: str) -> None:

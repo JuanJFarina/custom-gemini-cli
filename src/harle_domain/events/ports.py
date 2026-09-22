@@ -3,7 +3,12 @@ from datetime import datetime, timedelta
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
-from .models import EventNotificationOccurrence, InteractionEvent, InternalEvent
+from .models import (
+    EventNotificationOccurrence,
+    InteractionEvent,
+    InteractionEventCandidate,
+    InternalEvent,
+)
 
 
 @runtime_checkable
@@ -134,7 +139,7 @@ class InteractionEventRepository(Protocol):
         limit: int,
         user_message_from: datetime,
         current_time: datetime,
-    ) -> Sequence[InteractionEvent]: ...
+    ) -> Sequence[InteractionEventCandidate]: ...
 
     async def disable(
         self,

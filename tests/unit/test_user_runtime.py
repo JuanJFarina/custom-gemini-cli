@@ -15,7 +15,11 @@ from harle_domain.accounts import (
     SubscriptionStatus,
     User,
 )
-from harle_domain.profiles import AssistantProfile, UserProfile
+from harle_domain.profiles import (
+    AssistantProfile,
+    InteractionFrequency,
+    UserProfile,
+)
 from harle_domain.tools.models import (
     InternalToolCallInteraction,
 )
@@ -57,6 +61,15 @@ class FakeAssistantProfiles:
         profile: AssistantProfile,
     ) -> AssistantProfile:
         raise NotImplementedError
+
+    async def update_interaction_frequency(
+        self,
+        *,
+        user_id: UUID,
+        frequency: InteractionFrequency,
+    ) -> AssistantProfile | None:
+        del frequency
+        return self.profiles.get(user_id)
 
 
 class FakeConversationStore:

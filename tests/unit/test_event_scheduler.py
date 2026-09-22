@@ -6,7 +6,13 @@ from uuid import UUID, uuid4
 
 from pytest import LogCaptureFixture
 
-from harle_domain.events import EventType, InteractionEvent, InternalEvent
+from harle_domain.events import (
+    EventType,
+    InteractionEvent,
+    InteractionEventCandidate,
+    InternalEvent,
+)
+from harle_domain.profiles import InteractionFrequency
 from harle_services.events import (
     AgentsScheduler,
     EventNotificationOutcome,
@@ -52,19 +58,30 @@ class FakeNotifications:
 
 
 class FakeInteractions:
-    def __init__(self, events: list[InteractionEvent] | None = None) -> None:
-        self.events = events or []
+    def __init__(
+        self,
+        events: list[InteractionEvent] | None = None,
+        frequency: InteractionFrequency = InteractionFrequency.HIGH,
+    ) -> None:
+        self.candidates = [
+            InteractionEventCandidate(event, frequency) for event in events or []
+        ]
         self.checked: list[UUID] = []
+        self.scales: list[object] = []
 
-    async def list_active(self) -> list[InteractionEvent]:
-        return list(self.events)
+    async def list_active(self) -> list[InteractionEventCandidate]:
+        return list(self.candidates)
 
     def should_trigger(
         self,
         event: InteractionEvent,
-        **_: object,
+        *,
+        scheduler_interval: object,
+        scale: object,
     ) -> bool:
+        del scheduler_interval
         self.checked.append(event.id)
+        self.scales.append(scale)
         return True
 
 
@@ -141,6 +158,7 @@ def test_scheduler_suppresses_interaction_only_for_user_with_due_event() -> None
 
         assert await scheduler.run_once() == 1
         assert interactions.checked == [available.id]
+        assert interactions.scales == [InteractionFrequency.HIGH.scale]
         assert notifications.interaction_attempts == [available.id]
 
     asyncio.run(verify())

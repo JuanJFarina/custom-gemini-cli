@@ -108,7 +108,7 @@ Implemented baseline:
 - Delivered ordinary and interaction-event messages are persisted as standalone assistant messages, including read-only tool interactions, without fabricated user prompts or conversation-quota usage.
 - Scheduled runs receive shared profiles, conversation context, current time and weather, Google Search grounding, and every authorized read-only tool while modifying tools are absent from the runtime store.
 - Every user owns one non-deletable active or disabled `interaction_event` with no fixed schedule or recurrence. It is evaluated only when the same user has no due ordinary event in the scheduler pass.
-- Interaction events use the interval-independent shape-2, 96-hour Weibull policy from the latest user or successful assistant contact. They stop after seven days without an actual user message, automatically resume when the user returns, require no pending response, and use neither quota nor a quiet period.
+- Interaction events use an interval-independent shape-2 Weibull policy from the latest user or successful assistant contact. User-controlled assistant-profile frequencies map high, medium, and low to 12-hour, 24-hour, and 48-hour scales, with high as the default. Interactions stop after seven days without an actual user message, automatically resume when the user returns, require no pending response, and use neither quota nor a quiet period.
 
 Remaining goals:
 
@@ -149,7 +149,7 @@ Exit criteria:
 - **Recurring notification duplication**: Compare `last_notified_at` with the computed occurrence window and update it only after successful Telegram delivery.
 - **Notification quota drift**: Use a successful-delivery ledger plus process-local in-flight reservations, retain consumed usage when an event is deleted, and reconcile quota persistence with durable outbox work before multiple workers are allowed.
 - **Subscription-period drift**: Treat synchronized current-period boundaries as external account data, validate that start precedes end, and never infer billing periods from local account timestamps.
-- **Excessive proactive messaging**: Evaluate interaction events only after same-user ordinary events, use the interval-independent 96-hour probability, reset it after every successful assistant delivery, and enforce the seven-day user-inactivity cutoff.
+- **Excessive proactive messaging**: Evaluate interaction events only after same-user ordinary events, apply the user's explicit high, medium, or low frequency with interval-independent probability, reset it after every successful assistant delivery, and enforce the seven-day user-inactivity cutoff.
 - **Scheduled context loss**: Persist each successfully delivered scheduled message without fabricating a user prompt so a later reply has the assistant-initiated context.
 - **Sensitive media references**: Keep Telegram file identifiers out of logs and model context, retain no raw bytes after active use, and scope every recent-media lookup by internal user UUID.
 - **Ephemeral media loss**: Treat the twelve-hour process-local media window as best-effort and allow restart to discard it.

@@ -8,11 +8,11 @@ from uuid import UUID
 from harle_domain.events import (
     EventStatus,
     InteractionEvent,
+    InteractionEventCandidate,
     InteractionEventRepository,
 )
 from harle_utils import Clock, as_utc, utc_now
 
-INTERACTION_SCALE = timedelta(hours=96)
 MAX_USER_INACTIVITY = timedelta(days=7)
 DEFAULT_INTERACTION_EVENT_LIMIT = 100
 
@@ -30,7 +30,7 @@ class InteractionEventService:
         self,
         *,
         limit: int = DEFAULT_INTERACTION_EVENT_LIMIT,
-    ) -> Sequence[InteractionEvent]:
+    ) -> Sequence[InteractionEventCandidate]:
         current_time = self._now()
         return await self.repository.list_active(
             limit=limit,
@@ -108,6 +108,7 @@ class InteractionEventService:
         event: InteractionEvent,
         *,
         scheduler_interval: timedelta,
+        scale: timedelta,
     ) -> bool:
         if event.status is not EventStatus.ACTIVE:
             return False
@@ -127,6 +128,7 @@ class InteractionEventService:
         probability = interaction_probability(
             elapsed=contact_inactivity,
             scheduler_interval=scheduler_interval,
+            scale=scale,
         )
         random_value = self.random_value()
         if not 0 <= random_value < 1:
@@ -141,12 +143,15 @@ def interaction_probability(
     *,
     elapsed: timedelta,
     scheduler_interval: timedelta,
+    scale: timedelta,
 ) -> float:
     if elapsed < timedelta(0):
         raise ValueError("Interaction elapsed time cannot be negative.")
     if scheduler_interval <= timedelta(0):
         raise ValueError("Scheduler interval must be positive.")
-    scale_seconds = INTERACTION_SCALE.total_seconds()
+    if scale <= timedelta(0):
+        raise ValueError("Interaction scale must be positive.")
+    scale_seconds = scale.total_seconds()
     elapsed_ratio = elapsed.total_seconds() / scale_seconds
     next_ratio = (elapsed + scheduler_interval).total_seconds() / scale_seconds
     return 1 - exp(-(next_ratio**2 - elapsed_ratio**2))

@@ -11,6 +11,7 @@ from harle_domain.messaging import (
     RecentMediaStore,
     TelegramMediaDownloader,
 )
+from harle_domain.profiles import AssistantProfileRepository
 from harle_infrastructure.google_sheets import (
     GoogleSheetsClientFactory,
     LegacyGoogleSheetsSettings,
@@ -40,6 +41,7 @@ from harle_services.events import (
 )
 from harle_services.expenses import ExpenseService
 from harle_services.messaging import MessageCoordinator
+from harle_services.profiles import AssistantProfileService
 from harle_services.runtime import UserRuntimeFactory
 from harle_services.tools import (
     ToolAccessPolicy,
@@ -49,6 +51,7 @@ from harle_services.tools import (
     ToolsInjector,
     create_internal_events_registration,
     create_internal_expenses_registration,
+    create_internal_profiles_registration,
     create_legacy_google_sheets_registration,
     create_recent_media_registration,
 )
@@ -110,13 +113,19 @@ class EventToolDependencies:
     notification_quotas: EventNotificationQuotaService
 
 
+@dataclass(frozen=True, slots=True)
+class RecentMediaToolDependencies:
+    store: RecentMediaStore
+    downloader: TelegramMediaDownloader
+
+
 def create_tools_injector(
     settings: LegacyGoogleSheetsSettings | None = None,
     *,
     expense_repository: ExpenseRepository | None = None,
     event_tools: EventToolDependencies | None = None,
-    recent_media_store: RecentMediaStore | None = None,
-    media_downloader: TelegramMediaDownloader | None = None,
+    assistant_profile_repository: AssistantProfileRepository | None = None,
+    recent_media_tools: RecentMediaToolDependencies | None = None,
 ) -> ToolsInjector:
     legacy_settings = settings or LegacyGoogleSheetsSettings()
     registrations: list[ToolFamilyRegistration] = [
@@ -138,13 +147,17 @@ def create_tools_injector(
                 event_tools.notification_quotas,
             ),
         )
-    if (recent_media_store is None) != (media_downloader is None):
-        raise ValueError("Recent media store and downloader must be supplied together.")
-    if recent_media_store is not None and media_downloader is not None:
+    if assistant_profile_repository is not None:
+        registrations.append(
+            create_internal_profiles_registration(
+                AssistantProfileService(assistant_profile_repository),
+            ),
+        )
+    if recent_media_tools is not None:
         registrations.append(
             create_recent_media_registration(
-                recent_media_store,
-                media_downloader,
+                recent_media_tools.store,
+                recent_media_tools.downloader,
             ),
         )
     registry = ToolRegistry(
@@ -154,6 +167,7 @@ def create_tools_injector(
         registry=registry,
         access_policy=ToolAccessPolicy(
             legacy_settings.LEGACY_GOOGLE_SHEETS_USER_ID,
+            profiles_enabled=assistant_profile_repository is not None,
         ),
     )
 
@@ -216,8 +230,11 @@ def _build_process_runtime(
             interactions=interaction_service,
             notification_quotas=notification_quotas,
         ),
-        recent_media_store=recent_media,
-        media_downloader=messenger,
+        assistant_profile_repository=PostgresAssistantProfileRepository(pool),
+        recent_media_tools=RecentMediaToolDependencies(
+            store=recent_media,
+            downloader=messenger,
+        ),
     )
     notifications = EventNotificationService(
         preflight=preflight,

@@ -7,6 +7,7 @@ from uuid import uuid4
 import asyncpg
 import pytest
 
+from harle_domain.profiles import InteractionFrequency
 from harle_infrastructure.postgres import (
     PostgresAccountRepository,
     PostgresAssistantProfileRepository,
@@ -23,6 +24,7 @@ ROOT = Path(__file__).parents[2]
 SCHEMA_PATHS = (
     ROOT / "scripts" / "apply_multi_user_runtime.sql",
     ROOT / "scripts" / "apply_subscription_interactions.sql",
+    ROOT / "scripts" / "apply_interaction_frequency.sql",
     ROOT / "scripts" / "apply_internal_expenses.sql",
     ROOT / "scripts" / "apply_internal_events.sql",
     ROOT / "scripts" / "apply_event_notification_quotas.sql",
@@ -144,7 +146,8 @@ async def verify_isolation(database_url: str) -> None:
             user_message_from=current_time - timedelta(days=7),
             current_time=current_time,
         )
-        assert [event.user_id for event in eligible] == [first_id]
+        assert [candidate.event.user_id for candidate in eligible] == [first_id]
+        assert eligible[0].interaction_frequency is InteractionFrequency.HIGH
         async with pool.acquire() as connection:
             await connection.execute(
                 """
@@ -184,6 +187,13 @@ async def verify_isolation(database_url: str) -> None:
         assert second_assistant is not None
         assert first_profile.personal_history == "First history"
         assert second_assistant.profile_text == "Assistant for Second"
+        assert second_assistant.interaction_frequency is InteractionFrequency.HIGH
+        updated_assistant = await assistant_profiles.update_interaction_frequency(
+            user_id=second_id,
+            frequency=InteractionFrequency.LOW,
+        )
+        assert updated_assistant is not None
+        assert updated_assistant.interaction_frequency is InteractionFrequency.LOW
 
         conversations = PostgresConversationRepository(pool)
         first_store = PostgresConversationStore(conversations, first_id, 10)

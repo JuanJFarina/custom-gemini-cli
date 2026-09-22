@@ -7,6 +7,7 @@ from .models import (
     EventTimestamps,
     EventType,
     InteractionEvent,
+    InteractionEventCandidate,
     InternalEvent,
     MonthlyRecurrence,
     RecurrenceRule,
@@ -20,6 +21,7 @@ from .ports import (
 )
 from .rules import (
     EventRange,
+    NotificationTiming,
     all_day_event_interval,
     due_recurrence_interval,
     event_range,
@@ -41,9 +43,11 @@ __all__ = [
     "EventTimestamps",
     "EventType",
     "InteractionEvent",
+    "InteractionEventCandidate",
     "InteractionEventRepository",
     "InternalEvent",
     "MonthlyRecurrence",
+    "NotificationTiming",
     "RecurrenceRule",
     "WeekDay",
     "WeeklyRecurrence",

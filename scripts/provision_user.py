@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import asyncpg
 
 PLAN_CODES = ("free", "basic", "max")
+INTERACTION_FREQUENCIES = ("high", "medium", "low")
 SUBSCRIPTION_STATUSES = (
     "active",
     "inactive",
@@ -54,6 +55,7 @@ class UserProfileProvision:
 class AssistantProfileProvision:
     assistant_display_name: str
     assistant_profile_text: str
+    interaction_frequency: str | None
 
 
 @dataclass(frozen=True)
@@ -186,6 +188,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--personal-history-file", type=Path)
     parser.add_argument("--assistant-display-name", required=True)
     parser.add_argument("--assistant-profile-text", required=True)
+    parser.add_argument(
+        "--interaction-frequency",
+        choices=INTERACTION_FREQUENCIES,
+    )
     return parser
 
 
@@ -273,6 +279,10 @@ def parse_arguments() -> ProvisionRequest:
                     cast(str, arguments.assistant_profile_text),
                     "assistant profile text",
                     20_000,
+                ),
+                interaction_frequency=cast(
+                    str | None,
+                    arguments.interaction_frequency,
                 ),
             ),
         )
@@ -506,17 +516,23 @@ async def _upsert_assistant_profile(
         INSERT INTO public.assistant_profiles (
             user_id,
             display_name,
-            profile_text
+            profile_text,
+            interaction_frequency
         )
-        VALUES ($1, $2, $3)
+        VALUES ($1, $2, $3, COALESCE($4, 'high'))
         ON CONFLICT (user_id) DO UPDATE
         SET display_name = EXCLUDED.display_name,
             profile_text = EXCLUDED.profile_text,
+            interaction_frequency = COALESCE(
+                $4,
+                assistant_profiles.interaction_frequency
+            ),
             updated_at = NOW()
         """,
         user_id,
         request.assistant_profile.assistant_display_name,
         request.assistant_profile.assistant_profile_text,
+        request.assistant_profile.interaction_frequency,
     )
 
 

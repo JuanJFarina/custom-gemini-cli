@@ -5,7 +5,11 @@ from uuid import UUID
 
 import asyncpg
 
-from harle_domain.profiles.models import AssistantProfile, UserProfile
+from harle_domain.profiles.models import (
+    AssistantProfile,
+    InteractionFrequency,
+    UserProfile,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +111,7 @@ class PostgresAssistantProfileRepository:
                     user_id,
                     display_name,
                     profile_text,
+                    interaction_frequency,
                     created_at,
                     updated_at
                 FROM assistant_profiles
@@ -137,24 +142,28 @@ class PostgresAssistantProfileRepository:
                     user_id,
                     display_name,
                     profile_text,
+                    interaction_frequency,
                     created_at,
                     updated_at
                 )
-                VALUES ($1, $2, $3, $4, $5)
+                VALUES ($1, $2, $3, $4, $5, $6)
                 ON CONFLICT (user_id) DO UPDATE
                 SET display_name = EXCLUDED.display_name,
                     profile_text = EXCLUDED.profile_text,
+                    interaction_frequency = EXCLUDED.interaction_frequency,
                     updated_at = EXCLUDED.updated_at
                 RETURNING
                     user_id,
                     display_name,
                     profile_text,
+                    interaction_frequency,
                     created_at,
                     updated_at
                 """,
                 user_id,
                 profile.display_name,
                 profile.profile_text,
+                profile.interaction_frequency.value,
                 profile.created_at,
                 profile.updated_at,
             )
@@ -162,6 +171,32 @@ class PostgresAssistantProfileRepository:
         if row is None:
             raise RuntimeError("Could not save assistant profile.")
         return _assistant_profile(row)
+
+    async def update_interaction_frequency(
+        self,
+        *,
+        user_id: UUID,
+        frequency: InteractionFrequency,
+    ) -> AssistantProfile | None:
+        async with self.pool.acquire() as connection:
+            row = await connection.fetchrow(
+                """
+                UPDATE assistant_profiles
+                SET interaction_frequency = $2,
+                    updated_at = NOW()
+                WHERE user_id = $1
+                RETURNING
+                    user_id,
+                    display_name,
+                    profile_text,
+                    interaction_frequency,
+                    created_at,
+                    updated_at
+                """,
+                user_id,
+                frequency.value,
+            )
+        return _assistant_profile(row) if row is not None else None
 
 
 def _user_profile(row: asyncpg.Record) -> UserProfile:
@@ -183,6 +218,9 @@ def _assistant_profile(row: asyncpg.Record) -> AssistantProfile:
         user_id=_uuid(row, "user_id"),
         display_name=_text(row, "display_name"),
         profile_text=_text(row, "profile_text"),
+        interaction_frequency=InteractionFrequency(
+            _text(row, "interaction_frequency"),
+        ),
         created_at=_datetime(row, "created_at"),
         updated_at=_datetime(row, "updated_at"),
     )

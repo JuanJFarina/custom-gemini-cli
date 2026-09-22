@@ -6,7 +6,12 @@ from uuid import UUID
 
 import asyncpg
 
-from harle_domain.events import EventStatus, InteractionEvent
+from harle_domain.events import (
+    EventStatus,
+    InteractionEvent,
+    InteractionEventCandidate,
+)
+from harle_domain.profiles import InteractionFrequency
 
 INTERACTION_EVENT_COLUMNS = """
     id,
@@ -46,7 +51,7 @@ class PostgresInteractionEventRepository:
         limit: int,
         user_message_from: datetime,
         current_time: datetime,
-    ) -> Sequence[InteractionEvent]:
+    ) -> Sequence[InteractionEventCandidate]:
         if limit <= 0:
             raise ValueError("Interaction event limit must be positive.")
         async with self.pool.acquire() as connection:
@@ -59,12 +64,15 @@ class PostgresInteractionEventRepository:
                     interactions.last_user_message_at,
                     interactions.last_agent_message_at,
                     interactions.created_at,
-                    interactions.updated_at
+                    interactions.updated_at,
+                    profiles.interaction_frequency
                 FROM interaction_events AS interactions
                 JOIN users AS owners
                     ON owners.id = interactions.user_id
                 JOIN plans
                     ON plans.code = owners.plan_code
+                JOIN assistant_profiles AS profiles
+                    ON profiles.user_id = interactions.user_id
                 WHERE interactions.status = 'active'
                     AND interactions.last_user_message_at >= $2
                     AND owners.subscription_status = 'active'
@@ -88,7 +96,15 @@ class PostgresInteractionEventRepository:
                 user_message_from,
                 current_time,
             )
-        return [_event_from_row(row) for row in rows]
+        return [
+            InteractionEventCandidate(
+                event=_event_from_row(row),
+                interaction_frequency=InteractionFrequency(
+                    _required(row, "interaction_frequency", str),
+                ),
+            )
+            for row in rows
+        ]
 
     async def disable(
         self,
