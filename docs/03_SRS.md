@@ -4,7 +4,7 @@
 
 Harle is a Telegram-first AI assistant product that should be fast, low-cost, safe, private, deeply personal, and useful for multiple subscribed users. This SRS is based on [the vision](01_VISION.md), [the feature scope](02_FEATURES.md), the current controlled-beta implementation, and the product decisions confirmed so far.
 
-This repository owns the assistant engine, Telegram runtime, memory, user data handling, and life-management tools. A separate project owns landing pages, registration, payment gateways, and web interfaces. Harle must integrate with that external product boundary without duplicating it.
+This repository owns the assistant engine, Telegram runtime, memory, user data handling, life-management tools, web authentication, commerce integration, and the API consumed by `harle-frontend`. The separate frontend project owns browser presentation and client-side interaction, but it must not duplicate backend business rules.
 
 This document distinguishes the implemented controlled-beta baseline from target requirements that remain pending. Pending requirements remain part of the product unless they are explicitly placed in a later scope.
 
@@ -13,7 +13,7 @@ This document distinguishes the implemented controlled-beta baseline from target
 - Users interact with Harle primarily through Telegram from mobile devices.
 - Users may share sensitive personal information, personal history, financial data, routines, goals, worries, and emotional context.
 - The controlled beta serves multiple subscribed users, each with isolated data, configuration, tools, memories, and permissions.
-- Subscription, account registration, payment flows, and web UI are handled by a separate system.
+- Landing pages and browser UI are handled by `harle-frontend`. This backend handles registration, authentication, payment-provider integration, subscription ownership, Telegram linking, and authenticated data access.
 - Telegram is the only first-product chat channel. WhatsApp is a future channel because of broader market reach.
 - The commercial runtime uses one FastAPI process and PostgreSQL. The CLI remains a local development interface.
 - Harle uses an AI model provider for reasoning and response generation, currently Gemini through the official Google API.
@@ -37,7 +37,9 @@ This document distinguishes the implemented controlled-beta baseline from target
 - Telegram updates are persisted and deduplicated before assistant execution. Consecutive messages may join a turn until tool execution or delivery begins.
 - The tenth valid message within two seconds triggers a per-identity cooldown. Cooldowns escalate from 60 seconds to 5 minutes and then 1 hour, and strikes decay after normal use.
 - Manually provisioned exact subscription-period boundaries define conversation and event-notification allowances. Completed conversations and successful ordinary event deliveries use separate configured plan limits with process-local in-flight reservations.
-- Runtime authorization for inferred writes, action audits, durable work queues, automated external subscription synchronization, privacy workflows, and multi-user Google integrations remain pending.
+- The unversioned `/api` surface provides Google registration, revocable browser sessions, renewable free-account periods, safe session state, and short-lived Telegram deep links.
+- Telegram link commands are deduplicated and consumed before ordinary admission without invoking Gemini. Linked identities then use the existing agent path.
+- Runtime authorization for inferred writes, action audits, durable work queues, paid subscriptions, email/password authentication, broader web management, privacy workflows, and multi-user Google integrations remain pending.
 
 ## User Requirements
 
@@ -59,6 +61,11 @@ This document distinguishes the implemented controlled-beta baseline from target
 - **UR-16 Reliability**: Harle shall report failures clearly when it cannot answer or complete a requested action.
 - **UR-17 Efficiency**: Harle shall pursue fast and inexpensive responses suitable for frequent daily use.
 - **UR-18 Event notification allowance**: Each plan shall provide a separate, visible allowance for successful event notifications during the user's synchronized subscription period without consuming conversation quota.
+- **UR-19 Google registration**: A user shall be able to create or access an account through Google.
+- **UR-20 Web session**: A user shall be able to inspect and end a secure, revocable browser session.
+- **UR-21 Free access**: A newly registered user shall receive an active free plan whose monthly allowance period renews automatically.
+- **UR-22 Telegram linking**: An authenticated user shall be able to prove ownership of a Telegram identity and link it to the same internal account.
+- **UR-23 Account status**: An authenticated user shall be able to inspect safe account, free-plan period, and Telegram-link state.
 
 ## System Specification
 
@@ -69,7 +76,7 @@ This document distinguishes the implemented controlled-beta baseline from target
 - **FR-03**: The system shall reject empty, unsupported, malformed, unauthorized, or unsubscribed messages without invoking the assistant engine.
 - **FR-04**: The system shall resolve each Telegram sender through a multi-user external-identity registry.
 - **FR-05**: The system shall map each allowed Telegram user to one internal user account.
-- **FR-06**: The controlled beta shall support explicit user provisioning. The target broad release shall synchronize subscription state from the external registration and payment product.
+- **FR-06**: The controlled beta shall support explicit user provisioning. The target broad release shall provision users through the web identity and commerce services in this backend and synchronize provider-confirmed subscription state into the account runtime.
 - **FR-07**: The system shall deny assistant access when a user's subscription is inactive, expired, missing, or revoked.
 - **FR-08**: User integrations shall be scoped to the internal account. Juan's private legacy Google Sheets credentials and spreadsheet identifiers may remain process configuration, but access shall depend only on his configured stable internal UUID.
 
@@ -96,7 +103,7 @@ This document distinguishes the implemented controlled-beta baseline from target
 - **FR-75**: Usage shall count only successful rows where `kind = 'conversation'` and `status = 'completed'`, using the user's synchronized subscription-period start as the inclusive boundary and period end as the exclusive boundary.
 - **FR-76**: Quota admission shall include process-local in-flight reservations, release reservations on every outcome, and exclude tool calls, retries, failed conversations, and individual messages aggregated into one conversation.
 - **FR-77**: An over-quota response shall expose the remaining allowance and exact synchronized subscription-period end without invoking Gemini.
-- **FR-78**: Plan limits shall come from account or plan configuration. The provisional free, basic, and max limits are 60, 480, and 1,920 monthly conversations.
+- **FR-78**: Plan limits shall come from account or plan configuration. The initial free, basic, and max limits are 60, 480, and 1,920 monthly conversations.
 - **FR-79**: Conversation and tool-interaction persistence shall use stable update-derived identifiers where required to prevent duplicate records.
 
 ### Memory and Profiles
@@ -166,7 +173,7 @@ This document distinguishes the implemented controlled-beta baseline from target
 
 ### Event Notification Quotas
 
-- **FR-101**: Every plan shall configure a positive event-notification limit per synchronized subscription period, separate from its conversation limit. The provisional free, basic, and max limits shall be 15, 60, and 240 notifications.
+- **FR-101**: Every plan shall configure a positive event-notification limit per synchronized subscription period, separate from its conversation limit. The initial free, basic, and max limits shall be 15, 60, and 240 notifications.
 - **FR-102**: Event-notification quota periods shall use each user's exact synchronized `subscription_period_starts_at` inclusive boundary and `subscription_period_ends_at` exclusive boundary. Both `user_event` and `system_event` notifications shall use the same allowance.
 - **FR-103**: Quota usage shall count each successfully delivered Telegram event notification once. Failed generation, failed delivery, safe retries, blocked occurrences, and quota-exhausted notices shall not count.
 - **FR-104**: The scheduler shall reserve event-notification allowance before invoking Gemini. Admission shall include successful deliveries and in-flight reservations so concurrent work cannot exceed the configured plan limit.
@@ -177,7 +184,7 @@ This document distinguishes the implemented controlled-beta baseline from target
 
 ### Subscription Periods and Scheduled Interaction
 
-- **FR-109**: The external registration and payment product shall synchronize each user's exact current `subscription_period_starts_at` and `subscription_period_ends_at` as timezone-aware UTC instants. The start shall precede the end.
+- **FR-109**: The backend commerce service shall synchronize each user's provider-confirmed `subscription_period_starts_at` and `subscription_period_ends_at` as timezone-aware UTC instants. The start shall precede the end.
 - **FR-110**: Conversation and event-notification allowance calculations shall use the synchronized current period without deriving boundaries from account creation, an original subscription date, or UTC calendar months. `subscription_valid_until` shall remain a separate access-expiration field.
 - **FR-111**: Every successfully delivered `user_event`, `system_event`, or `interaction_event` message shall be persisted in conversation history as a standalone assistant message. Persistence shall not fabricate a user prompt, imply that a user response exists, or make the row count toward conversation quota. Read-only tool interactions used by the scheduled run shall use the existing tool-interaction history contract.
 - **FR-112**: Every user shall own exactly one internal `interaction_event`. It shall have no fixed start, end, notification window, recurrence rule, or materialized occurrence because its eligibility is calculated from contact activity on every scheduler pass.
@@ -215,6 +222,47 @@ This document distinguishes the implemented controlled-beta baseline from target
 - **FR-66**: Modifying tools shall distinguish direct requests from inferred or proactive actions. The controlled beta enforces this through the assistant instruction; the target runtime shall enforce it through proposed actions.
 - **FR-67**: Future reminder storage shall support user ownership, content, schedule, delivery status, cancellation, and links to any originating conversation or proposed action. It shall not introduce a second event-recurrence model.
 
+### Web API Contract
+
+The endpoint catalog in this section is the backend source of truth for `harle-frontend`. The first web release supports Google registration, renewable free accounts, sessions, and Telegram linking. Email/password authentication, paid subscriptions, account management, expense and event management, export, and deletion remain later work.
+
+#### Conventions and authorization
+
+- **FR-121**: Browser-facing endpoints shall use the unversioned `/api` prefix. The backend and its only browser client shall evolve together. The existing `/telegram/webhook` and `/healthcheck` routes remain outside that prefix.
+- **FR-122**: JSON payloads shall use `snake_case`, UUIDs shall remain opaque strings, calendar dates shall use ISO `YYYY-MM-DD`, instants shall use timezone-aware RFC 3339 values, and money shall use decimal strings plus an explicit currency.
+- **FR-123**: Errors shall use one envelope containing a stable code, safe user-facing message, optional field errors, and request identifier. Validation, authentication, authorization, conflict, quota, and provider failures shall remain distinguishable.
+- **FR-124**: Authenticated endpoints shall resolve the internal user exclusively from the server-side session. A client-supplied user UUID shall never grant ownership.
+- **FR-125**: Browser sessions shall use revocable opaque identifiers in `Secure`, `HttpOnly` cookies with an appropriate `SameSite` policy. State-changing cookie-authenticated requests shall require CSRF protection.
+- **FR-126**: Credentialed cross-origin access shall use an explicit frontend-origin allowlist. Wildcard origins shall not be combined with credentials.
+- **FR-127**: Telegram-link and other retry-sensitive writes shall return a safe prior result or invalidate earlier pending state when retried.
+- **FR-128**: API response models shall be service or domain contracts and shall not expose PostgreSQL rows, provider payloads, password hashes, Telegram identifiers, or secrets directly.
+
+#### Google identity and free accounts
+
+- **FR-129**: `GET /api/auth/google/start` and `GET /api/auth/google/callback` shall implement Google OpenID Connect authorization-code flow with validated `state`, `nonce`, PKCE, fixed redirects, and stable provider subject identifiers.
+- **FR-130**: The Google authorization start shall bind the browser-provided locale and valid IANA timezone to the protected OAuth state used during first-account provisioning.
+- **FR-131**: A first successful Google callback shall atomically create an active free user, Google external identity, user profile, assistant profile, and exact monthly allowance period.
+- **FR-132**: A returning Google subject shall resolve the same internal user and shall not create duplicate account or profile records.
+- **FR-133**: Google sign-in shall not merge accounts by email. The stable verified provider subject shall be the login identity.
+- **FR-134**: Active free accounts shall renew their exact monthly allowance period automatically while preserving the period boundary sequence.
+- **FR-135**: Free-period renewal shall occur before Telegram conversation admission and scheduled-user resolution so period expiration alone does not interrupt active free service.
+- **FR-136**: Google sign-in shall link to an existing account only under an explicit safe linking policy; a matching unverified email alone shall not silently merge accounts.
+- **FR-137**: `GET /api/session` shall return the authenticated user's safe account, free-plan period, Telegram-link state, and CSRF metadata without returning authentication secrets or provider identifiers.
+- **FR-138**: `POST /api/auth/logout` shall revoke the current session and clear its cookie.
+
+#### Telegram linking
+
+- **FR-139**: `GET /api/account/telegram-link` shall return only disconnected, pending, or connected state plus safe expiry metadata.
+- **FR-140**: `POST /api/account/telegram-link` shall invalidate earlier pending tokens and issue a short-lived, single-use token bound to the authenticated account.
+- **FR-141**: The returned Telegram deep link shall carry the raw token only in its bot start parameter. PostgreSQL shall store only its hash.
+- **FR-142**: The Telegram webhook shall identify a link command before agent admission, claim its update for deduplication, consume the token atomically, and attach the Telegram identity without invoking Gemini.
+- **FR-143**: A user shall own at most one Telegram identity, and a Telegram identity shall belong to at most one user. Linking shall not silently move an existing identity.
+- **FR-144**: Link tokens and provider identifiers shall not appear in application logs or frontend-visible account payloads.
+
+#### Deferred web capabilities
+
+- **FR-145**: Email/password authentication, password recovery, public paid-plan discovery, Mercado Pago subscriptions, account/profile mutation, expense management, event management, export, deletion, and Telegram unlinking remain later capabilities requiring separate product approval.
+
 ### Nonfunctional Requirements
 
 - **NFR-01 Privacy**: User data shall be private by default and isolated by account.
@@ -232,13 +280,20 @@ This document distinguishes the implemented controlled-beta baseline from target
 - **NFR-13 Observability**: Before broad launch, production operations shall expose enough safe logs, metrics, and health checks to detect failures and cost regressions.
 - **NFR-14 Compliance discovery**: Legal, privacy, and security obligations for storing sensitive user data shall be investigated before broad paid release.
 - **NFR-15 Background reliability**: Process-local event notifications shall retry failed delivery while the notification window and one-hour post-end grace period remain open. Future queued work and durable outbound notifications shall be observable, retryable where safe, and auditable enough to diagnose missed or duplicate actions.
+- **NFR-16 API compatibility**: Browser-contract changes shall be coordinated directly with the owned `harle-frontend` client.
+- **NFR-17 Web security**: Authentication, OAuth, session, CSRF, CORS, and account-linking controls shall follow current OWASP guidance and be independently tested before broad launch.
+- **NFR-18 OAuth reliability**: Google callback processing shall validate state, nonce, PKCE, issuer, audience, and verified identity claims without trusting browser-supplied account data.
 
 ## Program
 
 Harle is conceptually divided into these program areas:
 
 - **Telegram interface**: Receives Telegram webhook updates, validates access, extracts messages, sends typing indicators, sends responses, and enforces Telegram message limits.
+- **Web API interface**: Exposes the unversioned authenticated JSON contract used by `harle-frontend`, performs payload validation, and delegates every business operation to services.
 - **CLI interface**: Provides a local entry point for direct prompts while reusing the same assistant engine, stores, tools, and model configuration.
+- **Identity and session services**: Integrate Google OAuth, create and revoke browser sessions, provision free accounts, and enforce web abuse controls.
+- **Free subscription service**: Activates and renews exact free-plan allowance periods independently from agent reasoning.
+- **Telegram-linking service**: Issues one-time account-bound link tokens and completes identity attachment only after proof arrives through the Telegram bot.
 - **Assistant engine**: Builds user-scoped context, calls the model, parses structured output, executes available tools, caps tool loops, and returns final text.
 - **Message coordinator**: Deduplicates Telegram updates, aggregates safe consecutive messages, and serializes conflicting work per identity.
 - **Memory and profile stores**: Persist conversations, retrieve bounded context, and store durable user and assistant profile data.
@@ -248,8 +303,8 @@ Harle is conceptually divided into these program areas:
 - **Preflight services**: Resolve identity, subscription, and exact synchronized subscription-period boundaries, apply temporary bans, and reserve conversation quota before assistant execution.
 - **Event scheduler**: Processes ordinary due events every five minutes, then independently evaluates interaction events for users without ordinary due work, wakes the owning active user's agent, sends Telegram messages, and records successful delivery.
 - **Event-notification quota service**: Resolves plan allowance for the user's synchronized subscription period, reserves capacity before ordinary event generation, records successful occurrence deliveries, and suppresses repeated quota notices.
-- **Future runtime services**: Proposed-action, audit, durable delivery, privacy, subscription-synchronization, and Google import services remain pending.
-- **External integrations**: Connects to AI providers, Telegram, PostgreSQL, Google Sheets, future productivity services, weather data, and external account or subscription systems.
+- **Future runtime services**: Proposed-action, audit, durable delivery, privacy, and Google import services remain pending.
+- **External integrations**: Connects to AI providers, Telegram, PostgreSQL, Google OAuth, Google Sheets, future productivity services, and weather data.
 
 The implemented controlled-beta message flow is:
 
@@ -305,6 +360,24 @@ The implemented Telegram-media flow is:
 6. The agent may call a read-only tool to download and inject one of the ten newest references while it remains within the best-effort twelve-hour window.
 7. Downloaded bytes are discarded after active use.
 
+The target free web registration flow is:
+
+1. `harle-frontend` supplies the browser locale and IANA timezone when it starts Google authentication.
+2. The backend validates the Google callback and either creates a complete active free account or resolves the existing Google subject.
+3. The backend creates a revocable server-side session in a secure cookie.
+4. The authenticated user requests a one-time Telegram deep link.
+5. The Telegram webhook consumes the token before agent admission and atomically attaches the Telegram identity.
+6. The frontend observes the connected state, and later Telegram messages use the existing agent runtime.
+7. The backend advances each active free account's exact monthly allowance period before access when renewal is due.
+
+The target authenticated browser flow is:
+
+1. The browser sends its secure session and CSRF proof to an `/api` endpoint.
+2. The API resolves the internal account from the session and validates only the payload shape.
+3. Account services inspect session and Telegram-link state without importing or invoking agent code.
+4. Repositories filter every read and mutation by the resolved owner.
+5. The API returns a service or domain contract and the frontend reconciles its state with that confirmed result.
+
 ## Machine
 
 The current machine environment is Python 3.10 or newer with FastAPI, Uvicorn, Pydantic, asyncpg, httpx, google-genai, gspread, and Google service account authentication.
@@ -320,7 +393,7 @@ Runtime dependencies include:
 - **Google Sheets API** for Juan's private legacy personal finance tools.
 - **Open-Meteo** for current weather context.
 - **Future productivity providers** for reminders or calendar data.
-- **External product system** for registration, subscription, and payment status.
+- **Google OAuth** for Google account sign-in.
 
 Production deployment shall provide:
 
@@ -331,13 +404,16 @@ Production deployment shall provide:
 - Connection pooling appropriate for expected user count.
 - Monitoring for request failures, provider failures, latency, token usage, and tool execution failures.
 - Monitoring for duplicate prevention, scheduler and notification failures, notification-quota admission and accounting, and future queue failures.
+- Monitoring for Google authentication, session abuse, free-period renewal, Telegram linking, and browser API endpoints.
 - Enforcement of the controlled beta's single-process deployment boundary until distributed coordination exists.
 
 Open requirements that need product discovery:
 
 - Exact privacy and legal requirements for storing conversations, profiles, personal history, and finance data.
-- Final conversation and event-notification plan limits, free trials, allowance carry-over, failed payments, and cancellation behavior.
+- Free trials, allowance carry-over, plan changes, taxes, refunds, failed-payment grace, and cancellation timing.
+- Session lifetime and safe future account-linking behavior.
 - Telegram authorization UX for approving, cancelling, and expiring proposed modifications.
+- Final Telegram web-link lifetime, relinking policy, and recovery behavior.
 - Durable notification delivery, optional quiet periods for ordinary event notifications, and external calendar integration beyond the process-local event capability.
 - The exact long-term Telegram media MIME allowlist beyond the voice-note-first controlled beta.
 - Data retention, deletion, export, and backup policies.
@@ -350,12 +426,20 @@ This diagram represents the intended architecture, not the current implementatio
 
 ```mermaid
 flowchart LR
+    subgraph WebApp["Harle Frontend"]
+        BrowserUI["Browser UI"]
+    end
+
     subgraph CLIApp["CLI App"]
         CLIEntrypoint["CLI Entrypoint"]
     end
 
     subgraph BackendApp["Backend App"]
-        FastAPI["FastAPI"]
+        TelegramAPI["Telegram API"]
+        WebAPI["Web API"]
+        IdentityServices["Identity and Session Services"]
+        FreeSubscriptionService["Free Subscription Service"]
+        TelegramLinking["Telegram Linking Service"]
         AgentScheduler["AgentScheduler"]
     end
 
@@ -394,11 +478,21 @@ flowchart LR
 
     subgraph ExternalApis["External APIs"]
         ExternalAPI[("External APIs")]
+        GoogleIdentity[("Google OAuth")]
     end
 
+    BrowserUI --> WebAPI
     CLIEntrypoint --> Agent
-    FastAPI --> Agent
+    TelegramAPI --> Agent
     AgentScheduler --> Agent
+    WebAPI --> IdentityServices
+    WebAPI --> FreeSubscriptionService
+    WebAPI --> TelegramLinking
+    WebAPI --> Postgres
+    IdentityServices --> Postgres
+    FreeSubscriptionService --> Postgres
+    TelegramLinking --> Postgres
+    IdentityServices --> GoogleIdentity
 
     AgentConfig --> Agent
     Agent --> ConversationStore

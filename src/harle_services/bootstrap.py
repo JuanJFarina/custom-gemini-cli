@@ -12,6 +12,7 @@ from harle_domain.messaging import (
     TelegramMediaDownloader,
 )
 from harle_domain.profiles import AssistantProfileRepository
+from harle_infrastructure.google_identity import GoogleOAuthClient
 from harle_infrastructure.google_sheets import (
     GoogleSheetsClientFactory,
     LegacyGoogleSheetsSettings,
@@ -19,19 +20,30 @@ from harle_infrastructure.google_sheets import (
 from harle_infrastructure.postgres import (
     PostgresAccountRepository,
     PostgresAssistantProfileRepository,
+    PostgresBrowserSessionRepository,
     PostgresConversationRepository,
     PostgresConversationStore,
     PostgresEventNotificationUsageRepository,
     PostgresEventRepository,
     PostgresExpenseRepository,
     PostgresInteractionEventRepository,
+    PostgresTelegramLinkRepository,
     PostgresTelegramUpdateRepository,
     PostgresUserProfileRepository,
+    PostgresWebAccountRepository,
     create_postgres_pool,
     validate_postgres_schema,
 )
 from harle_infrastructure.telegram import InMemoryRecentMediaStore, TelegramMessenger
 from harle_services.access import PreflightService
+from harle_services.accounts import (
+    FreeSubscriptionService,
+    GoogleAuthService,
+    SessionService,
+    TelegramLinkCommandService,
+    TelegramLinkService,
+    WebAccountService,
+)
 from harle_services.events import (
     AgentsScheduler,
     EventNotificationQuotaService,
@@ -58,11 +70,28 @@ from harle_services.tools import (
 
 
 @dataclass(frozen=True, slots=True)
+class AccountRuntime:
+    google_auth: GoogleAuthService
+    sessions: SessionService
+    accounts: WebAccountService
+    telegram_links: TelegramLinkService
+    telegram_link_commands: TelegramLinkCommandService
+    free_subscriptions: FreeSubscriptionService
+
+
+@dataclass(frozen=True, slots=True)
+class _AccountAccessRuntime:
+    account: AccountRuntime
+    preflight: PreflightService
+
+
+@dataclass(frozen=True, slots=True)
 class TelegramRuntime:
     messenger: OutboundMessenger
     media_downloader: TelegramMediaDownloader
     recent_media: RecentMediaStore
     maximum_media_request_size: int
+    account: AccountRuntime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +124,19 @@ class ProcessRuntime:
     def interactions(self) -> InteractionEventService:
         return self.scheduler.interactions
 
+    @property
+    def account(self) -> AccountRuntime | None:
+        return self.telegram.account
+
+
+@dataclass(frozen=True, slots=True)
+class AccountRuntimeConfig:
+    telegram_bot_username: str
+    google_oauth_client_id: str
+    google_oauth_client_secret: str
+    google_oauth_redirect_uri: str
+    session_signing_secret: str
+
 
 @dataclass(frozen=True, slots=True)
 class ProcessRuntimeConfig:
@@ -102,6 +144,7 @@ class ProcessRuntimeConfig:
     pool_min_size: int
     pool_max_size: int
     telegram_bot_token: str
+    account: AccountRuntimeConfig
     scheduler_interval_seconds: float = 300
     maximum_media_request_size: int = 12 * 1024 * 1024
 
@@ -200,12 +243,9 @@ def _build_process_runtime(
     config: ProcessRuntimeConfig,
     legacy_settings: LegacyGoogleSheetsSettings | None,
 ) -> ProcessRuntime:
-    accounts = PostgresAccountRepository(pool)
     conversations = PostgresConversationRepository(pool)
     event_repository = PostgresEventRepository(pool)
-    interaction_service = InteractionEventService(
-        PostgresInteractionEventRepository(pool),
-    )
+    telegram_updates = PostgresTelegramUpdateRepository(pool)
     notification_quotas = EventNotificationQuotaService(
         PostgresEventNotificationUsageRepository(pool),
     )
@@ -218,9 +258,16 @@ def _build_process_runtime(
         pool,
         conversations,
     )
-    preflight = PreflightService(
-        accounts=accounts,
-        conversations=conversations,
+    account_access = _create_account_access_runtime(
+        pool,
+        config.account,
+        messenger,
+        telegram_updates,
+        conversations,
+    )
+    interaction_service = InteractionEventService(
+        PostgresInteractionEventRepository(pool),
+        free_subscriptions=account_access.account.free_subscriptions,
     )
     tools = create_tools_injector(
         legacy_settings,
@@ -237,7 +284,7 @@ def _build_process_runtime(
         ),
     )
     notifications = EventNotificationService(
-        preflight=preflight,
+        preflight=account_access.preflight,
         users=users,
         messenger=messenger,
         quotas=notification_quotas,
@@ -255,18 +302,19 @@ def _build_process_runtime(
     )
     return ProcessRuntime(
         pool=pool,
-        preflight=preflight,
+        preflight=account_access.preflight,
         users=users,
         tools=tools,
         messages=MessageCoordinator(
-            PostgresTelegramUpdateRepository(pool),
-            preflight.check_rate_limit,
+            telegram_updates,
+            account_access.preflight.check_rate_limit,
         ),
         telegram=TelegramRuntime(
             messenger=messenger,
             media_downloader=messenger,
             recent_media=recent_media,
             maximum_media_request_size=config.maximum_media_request_size,
+            account=account_access.account,
         ),
         scheduler=AgentsScheduler(
             events=EventService(event_repository),
@@ -275,6 +323,59 @@ def _build_process_runtime(
             interval_seconds=config.scheduler_interval_seconds,
         ),
     )
+
+
+def _create_account_access_runtime(
+    pool: asyncpg.Pool,
+    config: AccountRuntimeConfig,
+    messenger: OutboundMessenger,
+    telegram_updates: PostgresTelegramUpdateRepository,
+    conversations: PostgresConversationRepository,
+) -> _AccountAccessRuntime:
+    accounts = PostgresWebAccountRepository(pool)
+    free_subscriptions = FreeSubscriptionService(accounts)
+    preflight = PreflightService(
+        accounts=PostgresAccountRepository(pool),
+        conversations=conversations,
+        free_subscriptions=free_subscriptions,
+    )
+    sessions = SessionService(
+        PostgresBrowserSessionRepository(pool),
+        config.session_signing_secret,
+    )
+    link_repository = PostgresTelegramLinkRepository(pool)
+    links = TelegramLinkService(
+        link_repository,
+        config.telegram_bot_username,
+    )
+    account = AccountRuntime(
+        google_auth=GoogleAuthService(
+            provider=GoogleOAuthClient(
+                client_id=config.google_oauth_client_id,
+                client_secret=config.google_oauth_client_secret,
+                redirect_uri=config.google_oauth_redirect_uri,
+            ),
+            accounts=accounts,
+            sessions=sessions,
+            signing_secret=config.session_signing_secret,
+        ),
+        sessions=sessions,
+        accounts=WebAccountService(
+            accounts=accounts,
+            sessions=sessions,
+            telegram_links=link_repository,
+            free_subscriptions=free_subscriptions,
+        ),
+        telegram_links=links,
+        telegram_link_commands=TelegramLinkCommandService(
+            links=links,
+            updates=telegram_updates,
+            messenger=messenger,
+            rate_limiter=preflight.check_rate_limit,
+        ),
+        free_subscriptions=free_subscriptions,
+    )
+    return _AccountAccessRuntime(account=account, preflight=preflight)
 
 
 def _create_user_runtime_factory(

@@ -12,6 +12,98 @@ from harle_domain.profiles.models import (
 )
 
 
+async def save_user_profile(
+    connection: asyncpg.Connection,
+    profile: UserProfile,
+) -> UserProfile:
+    row = await connection.fetchrow(
+        """
+        INSERT INTO user_profiles (
+            user_id,
+            preferred_name,
+            locale,
+            timezone,
+            latitude,
+            longitude,
+            personal_history,
+            created_at,
+            updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (user_id) DO UPDATE
+        SET preferred_name = EXCLUDED.preferred_name,
+            locale = EXCLUDED.locale,
+            timezone = EXCLUDED.timezone,
+            latitude = EXCLUDED.latitude,
+            longitude = EXCLUDED.longitude,
+            personal_history = EXCLUDED.personal_history,
+            updated_at = EXCLUDED.updated_at
+        RETURNING
+            user_id,
+            preferred_name,
+            locale,
+            timezone,
+            latitude,
+            longitude,
+            personal_history,
+            created_at,
+            updated_at
+        """,
+        profile.user_id,
+        profile.preferred_name,
+        profile.locale,
+        profile.timezone,
+        profile.latitude,
+        profile.longitude,
+        profile.personal_history,
+        profile.created_at,
+        profile.updated_at,
+    )
+    if row is None:
+        raise RuntimeError("Could not save user profile.")
+    return _user_profile(row)
+
+
+async def save_assistant_profile(
+    connection: asyncpg.Connection,
+    profile: AssistantProfile,
+) -> AssistantProfile:
+    row = await connection.fetchrow(
+        """
+        INSERT INTO assistant_profiles (
+            user_id,
+            display_name,
+            profile_text,
+            interaction_frequency,
+            created_at,
+            updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (user_id) DO UPDATE
+        SET display_name = EXCLUDED.display_name,
+            profile_text = EXCLUDED.profile_text,
+            interaction_frequency = EXCLUDED.interaction_frequency,
+            updated_at = EXCLUDED.updated_at
+        RETURNING
+            user_id,
+            display_name,
+            profile_text,
+            interaction_frequency,
+            created_at,
+            updated_at
+        """,
+        profile.user_id,
+        profile.display_name,
+        profile.profile_text,
+        profile.interaction_frequency.value,
+        profile.created_at,
+        profile.updated_at,
+    )
+    if row is None:
+        raise RuntimeError("Could not save assistant profile.")
+    return _assistant_profile(row)
+
+
 @dataclass(frozen=True, slots=True)
 class PostgresUserProfileRepository:
     pool: asyncpg.Pool
@@ -50,53 +142,7 @@ class PostgresUserProfileRepository:
             raise ValueError("User profile owner does not match user identifier.")
 
         async with self.pool.acquire() as connection:
-            row = await connection.fetchrow(
-                """
-                INSERT INTO user_profiles (
-                    user_id,
-                    preferred_name,
-                    locale,
-                    timezone,
-                    latitude,
-                    longitude,
-                    personal_history,
-                    created_at,
-                    updated_at
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                ON CONFLICT (user_id) DO UPDATE
-                SET preferred_name = EXCLUDED.preferred_name,
-                    locale = EXCLUDED.locale,
-                    timezone = EXCLUDED.timezone,
-                    latitude = EXCLUDED.latitude,
-                    longitude = EXCLUDED.longitude,
-                    personal_history = EXCLUDED.personal_history,
-                    updated_at = EXCLUDED.updated_at
-                RETURNING
-                    user_id,
-                    preferred_name,
-                    locale,
-                    timezone,
-                    latitude,
-                    longitude,
-                    personal_history,
-                    created_at,
-                    updated_at
-                """,
-                user_id,
-                profile.preferred_name,
-                profile.locale,
-                profile.timezone,
-                profile.latitude,
-                profile.longitude,
-                profile.personal_history,
-                profile.created_at,
-                profile.updated_at,
-            )
-
-        if row is None:
-            raise RuntimeError("Could not save user profile.")
-        return _user_profile(row)
+            return await save_user_profile(connection, profile)
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,41 +182,7 @@ class PostgresAssistantProfileRepository:
             )
 
         async with self.pool.acquire() as connection:
-            row = await connection.fetchrow(
-                """
-                INSERT INTO assistant_profiles (
-                    user_id,
-                    display_name,
-                    profile_text,
-                    interaction_frequency,
-                    created_at,
-                    updated_at
-                )
-                VALUES ($1, $2, $3, $4, $5, $6)
-                ON CONFLICT (user_id) DO UPDATE
-                SET display_name = EXCLUDED.display_name,
-                    profile_text = EXCLUDED.profile_text,
-                    interaction_frequency = EXCLUDED.interaction_frequency,
-                    updated_at = EXCLUDED.updated_at
-                RETURNING
-                    user_id,
-                    display_name,
-                    profile_text,
-                    interaction_frequency,
-                    created_at,
-                    updated_at
-                """,
-                user_id,
-                profile.display_name,
-                profile.profile_text,
-                profile.interaction_frequency.value,
-                profile.created_at,
-                profile.updated_at,
-            )
-
-        if row is None:
-            raise RuntimeError("Could not save assistant profile.")
-        return _assistant_profile(row)
+            return await save_assistant_profile(connection, profile)
 
     async def update_interaction_frequency(
         self,

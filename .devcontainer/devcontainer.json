@@ -1,5 +1,5 @@
 {
-  "name": "Custom Gemini CLI Devcontainer",
+  "name": "Harle Backend Devcontainer",
   "build": {
     "dockerfile": "Dockerfile",
     "context": ".."

@@ -32,3 +32,23 @@ class MessageDeliveryError(RuntimeError):
 
 class MediaDownloadError(RuntimeError):
     pass
+
+
+class AuthenticationRequiredError(AccessDeniedError):
+    pass
+
+
+class InvalidCsrfError(AccessDeniedError):
+    pass
+
+
+class InvalidOAuthError(AccessDeniedError):
+    pass
+
+
+class OAuthProviderError(RuntimeError):
+    pass
+
+
+class TelegramAlreadyLinkedError(AccessDeniedError):
+    pass

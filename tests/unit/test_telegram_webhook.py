@@ -7,7 +7,7 @@ import asyncpg
 from fastapi import BackgroundTasks, FastAPI, Request
 from pytest import MonkeyPatch
 
-import harle_api.app as app_module
+import harle_api.routes.telegram as app_module
 from harle_domain.messaging import (
     OutboundMessenger,
     RecentMediaStore,

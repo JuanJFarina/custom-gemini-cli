@@ -1,5 +1,6 @@
 from harle_api.settings import ApiSettings
 from harle_services.bootstrap import (
+    AccountRuntimeConfig,
     ProcessRuntime,
     ProcessRuntimeConfig,
     close_process_runtime,
@@ -16,6 +17,13 @@ async def create_runtime(settings: ApiSettings) -> ApiRuntime:
             pool_min_size=settings.POSTGRES_POOL_MIN_SIZE,
             pool_max_size=settings.POSTGRES_POOL_MAX_SIZE,
             telegram_bot_token=settings.TELEGRAM_BOT_TOKEN,
+            account=AccountRuntimeConfig(
+                telegram_bot_username=settings.TELEGRAM_BOT_USERNAME,
+                google_oauth_client_id=settings.GOOGLE_OAUTH_CLIENT_ID,
+                google_oauth_client_secret=settings.GOOGLE_OAUTH_CLIENT_SECRET,
+                google_oauth_redirect_uri=settings.GOOGLE_OAUTH_REDIRECT_URI,
+                session_signing_secret=settings.SESSION_SIGNING_SECRET,
+            ),
             scheduler_interval_seconds=settings.EVENT_SCHEDULER_INTERVAL_SECONDS,
             maximum_media_request_size=settings.MAX_MEDIA_REQUEST_SIZE,
         ),

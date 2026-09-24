@@ -217,7 +217,7 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Custom Gemini CLI runtime data
+# Harle Backend runtime data
 data/conversations/*.json
 data/*.sqlite3
 data/*.sqlite3-*

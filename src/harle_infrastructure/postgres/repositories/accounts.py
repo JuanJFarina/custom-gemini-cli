@@ -41,6 +41,34 @@ RESOLVED_USER_COLUMNS = """
 FieldT = TypeVar("FieldT")
 
 
+async def insert_external_identity(
+    connection: asyncpg.Connection,
+    *,
+    identity: ExternalIdentity,
+) -> None:
+    await connection.execute(
+        """
+        INSERT INTO external_identities (
+            id,
+            user_id,
+            provider,
+            external_user_id,
+            display_name,
+            created_at,
+            updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        """,
+        identity.id,
+        identity.user_id,
+        identity.provider,
+        identity.external_user_id,
+        identity.display_name,
+        identity.created_at,
+        identity.updated_at,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class PostgresAccountRepository:
     pool: asyncpg.Pool

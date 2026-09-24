@@ -21,8 +21,17 @@ from harle_infrastructure.postgres.repositories.profiles import (
     PostgresAssistantProfileRepository,
     PostgresUserProfileRepository,
 )
+from harle_infrastructure.postgres.repositories.telegram_links import (
+    PostgresTelegramLinkRepository,
+)
 from harle_infrastructure.postgres.repositories.telegram_updates import (
     PostgresTelegramUpdateRepository,
+)
+from harle_infrastructure.postgres.repositories.web_accounts import (
+    PostgresWebAccountRepository,
+)
+from harle_infrastructure.postgres.repositories.web_sessions import (
+    PostgresBrowserSessionRepository,
 )
 from harle_infrastructure.postgres.schema import validate_postgres_schema
 
@@ -36,8 +45,11 @@ __all__ = [
     "PostgresEventRepository",
     "PostgresInteractionEventRepository",
     "PostgresExpenseRepository",
+    "PostgresBrowserSessionRepository",
+    "PostgresTelegramLinkRepository",
     "PostgresTelegramUpdateRepository",
     "PostgresUserProfileRepository",
+    "PostgresWebAccountRepository",
     "create_postgres_pool",
     "validate_postgres_schema",
 ]

@@ -36,6 +36,12 @@
 - **Temporary safety bans**: The tenth valid message within two seconds triggers a per-identity cooldown that escalates from 60 seconds to 5 minutes and then 1 hour, with strike decay and at most one notice per cooldown.
 - **Exact subscription-period quotas**: Manually provisioned accounts store exact current `subscription_period_starts_at` and `subscription_period_ends_at` UTC boundaries. Completed conversations and successful ordinary event notifications use those half-open boundaries with process-local in-flight reservations instead of UTC calendar months.
 - **Separate event-notification quotas**: Plans limit successful `user_event` and `system_event` deliveries separately from conversations. Successful occurrences remain in a user-owned delivery ledger, failed attempts and interaction messages consume no allowance, and the first blocked occurrence in a period receives one static exhaustion notice.
+- **Configured initial plans**: The internal `free`, `basic`, and `max` plans provide 60, 480, and 1,920 conversations plus 15, 60, and 240 event notifications per monthly subscription period.
+- **Frontend web API**: The backend exposes an authenticated `/api` contract for the separate `harle-frontend` project while keeping account rules outside agent code.
+- **Google registration**: A visitor can register or sign in through Google OpenID Connect and receive a revocable server-side session in a secure cookie.
+- **Renewable free accounts**: First Google login creates a complete active free account, and its exact monthly allowance period renews automatically while the account remains active.
+- **Telegram account linking**: An authenticated web user can create a short-lived, single-use bot deep link that attaches a proven Telegram identity before agent admission.
+- **Web session state**: An authenticated user can inspect the current account, free-plan period, and Telegram-link state.
 
 ## Pending Product MVP
 
@@ -54,13 +60,19 @@
 - **Read on request**: Harle may read or query connected tools such as expenses, reminders, or calendar data when the user asks a question.
 - **User-authorized modifications**: Harle may modify expenses, reminders, calendar events, profiles, memories, or other user data when the user directly asks for that modification. If Harle infers, suggests, or initiates a modification itself, it must ask the user first.
 - **Confirmation and audit**: Inferred modifications should become expiring proposed actions that the same user can confirm or cancel, and every executed modification should be auditable.
-- **Automated subscription synchronization**: Harle should receive current plan and subscription state safely from the external registration and payment product.
+- **Automated subscription synchronization**: The backend commerce service should synchronize provider-confirmed plan, subscription state, and exact period boundaries into the account data used by assistant admission.
 - **Privacy controls**: Users should be able to export and delete their data according to defined retention, backup, and deletion policies.
 - **Durable accepted work**: Work accepted from Telegram should survive process restarts without duplicate side effects or duplicate responses where the provider permits it.
 - **Operational readiness**: Broad release requires automated quality gates, readiness checks, safe metrics and logs, backups, and exercised restoration.
 
 ## Possible Later Features
 
+- **Email and password authentication**: Users may register with a verified email and password, recover access, and safely link that credential to an existing account.
+- **Public paid-plan catalog**: The web API may expose Gratuito, Básico, and Max with approved ARS prices and separate conversation and notification allowances.
+- **Subscription checkout**: The backend may create and manage Mercado Pago subscriptions, process provider webhooks idempotently, and treat provider-confirmed state rather than browser redirects as authoritative.
+- **Account management API**: Authenticated users may inspect and update their user profile, assistant profile, proactive-interaction settings, current plan, subscription period, and usage.
+- **Expense management API**: Authenticated users may list, summarize, create, update, and permanently delete their own internal expenses through the same domain rules used by assistant tools.
+- **Event management API**: Authenticated users may list, create, update, disable, re-enable, and permanently delete their own `user_event` records through the same domain rules used by assistant tools.
 - **External context injectors**: Harle may use cached or polled context providers for data such as weather, location, reminders, calendars, or other user-authorized topics.
 - **Durable background queues**: Harle may use durable queues for scheduled agent wakeups, outbound messages, proposed actions, and integration polling when reliability requires it.
 - **Google import and synchronization**: An authorized agent tool may invoke a controlled migration or synchronization service that imports Google Sheets expenses and Google Calendar events into Harle's internal systems.
@@ -75,7 +87,7 @@
 
 - **Generic model playground**: Harle should not become a tool for comparing models, tweaking prompts, or experimenting with AI APIs as the main product experience.
 - **Cluttered productivity dashboard**: Harle should not become a heavy dashboard where the user has to manage the assistant manually.
-- **First-product web platform**: The first Harle product should not include the landing page, registration, payments, or web interface inside this repository.
+- **Web UI inside this repository**: Landing pages and browser interfaces belong to the separate frontend repository. This backend owns their API, authentication, payment integration, and business rules.
 - **Commercial CLI access**: The CLI remains a development interface rather than a subscribed product channel.
 - **Feature volume for its own sake**: New integrations should not be added unless they make the assistant more useful in real life.
 - **Manipulative human simulation**: Harle should not hide that it is AI, create dependency, or use human-like behavior in ways that reduce the user's agency.
@@ -85,9 +97,9 @@
 ## Needs Product Discovery
 
 - **Privacy requirements**: Define the technical, legal, and product requirements needed to make user data safe and private.
-- **Subscription boundaries**: Define what is included in each subscription, usage limits, trial behavior, and cancellation behavior.
+- **Subscription lifecycle**: Define trials, plan changes, proration, refunds, failed-payment grace, taxes, and cancellation timing.
 - **Confirmation flow**: Define the exact user experience for approving environment modifications from Telegram.
 - **Memory policy**: Define what Harle stores automatically, what requires explicit consent, and how users can review or delete memory.
 - **Data lifecycle**: Define retention periods, deletion SLA, export format, backup retention, supported operating region, and credential revocation.
-- **Quota policy**: Confirm plan names, final request and event-notification limits, upgrades, downgrades, failed-payment behavior, and whether unused allowance carries over.
+- **Quota evolution**: Define carry-over behavior and how future price or allowance changes affect existing subscriptions.
 - **Google source of truth**: Decide whether internal expenses and events remain authoritative after multi-user Google integrations are introduced.

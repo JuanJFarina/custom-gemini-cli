@@ -246,9 +246,9 @@ erDiagram
     }
 ```
 
-- `subscription_period_starts_at` and `subscription_period_ends_at` are exact current UTC boundaries synchronized from the external account product. The start is inclusive, the end is exclusive, and `subscription_valid_until` remains a separate access-expiration field.
+- `subscription_period_starts_at` and `subscription_period_ends_at` are exact current UTC boundaries. They are manually provisioned in the controlled beta and will be synchronized from provider-confirmed commerce state. The start is inclusive, the end is exclusive, and `subscription_valid_until` remains a separate access-expiration field.
 - Conversation and event-notification usage use the synchronized boundaries. Harle does not derive allowance periods from account creation, an original subscription date, or UTC calendar months.
-- `PLAN.monthly_notification_limit` is separate from `monthly_request_limit`; the provisional free, basic, and max values are 15, 60, and 240 per synchronized subscription period.
+- `PLAN.monthly_notification_limit` is separate from `monthly_request_limit`; the initial free, basic, and max values are 15, 60, and 240 per synchronized subscription period. Their conversation limits are 60, 480, and 1,920.
 - A delivery row represents one successfully delivered `user_event` or `system_event` occurrence. Period usage counts `delivered_at` within the owning user's synchronized boundaries.
 - The event identifier, occurrence start, and notification window are unique together so a successful occurrence cannot consume allowance twice.
 - Deleting an event sets the ledger's event reference to null instead of deleting its usage. Deleting the owning account removes its delivery and notice records under the account-deletion policy.
@@ -268,10 +268,49 @@ The conversation model supports `kind = 'scheduled_message'` in addition to `con
 - Read-only tool interactions from the scheduled run remain separate `tool_call` history rows under the existing interaction contract.
 - Scheduled-message persistence occurs only after successful Telegram delivery. Failed generation or delivery creates no history row and does not advance interaction contact state.
 
+## Current Free Web Registration Extension
+
+This implemented model supports Google registration, renewable free accounts, browser sessions, and Telegram linking.
+
+```mermaid
+erDiagram
+    HARLE_USER ||--o{ WEB_SESSION : owns
+    HARLE_USER ||--o{ TELEGRAM_LINK_TOKEN : creates
+
+    WEB_SESSION {
+        UUID id PK
+        UUID user_id FK
+        TEXT session_token_hash UK
+        TIMESTAMPTZ expires_at
+        TIMESTAMPTZ revoked_at
+        TIMESTAMPTZ last_used_at
+        TIMESTAMPTZ created_at
+    }
+
+    TELEGRAM_LINK_TOKEN {
+        UUID id PK
+        UUID user_id FK
+        TEXT token_hash UK
+        TIMESTAMPTZ expires_at
+        TIMESTAMPTZ consumed_at
+        TIMESTAMPTZ created_at
+    }
+```
+
+- Google authentication reuses `EXTERNAL_IDENTITY` with provider `google` and a stable provider subject. Telegram continues to use provider `telegram`.
+- A user may own at most one identity for each provider, and one provider identity may belong to at most one user.
+- A web session stores only a hash of the opaque cookie value and supports independent expiry and revocation.
+- A Telegram link token is account-bound, short-lived, single-use, and stored only as a hash. Issuing one invalidates earlier pending tokens for the user.
+- Successful bot proof consumes the token and creates the Telegram external identity atomically. It never moves an identity from another user.
+- First Google login creates a complete active free user, both required profiles, and exact allowance boundaries. The existing user-insert trigger creates the interaction event.
+- Free renewal advances both exact period boundaries by calendar months before conversation or scheduled access while preserving prior boundaries.
+
 ## Out Of Scope For This ERD
 
 - Proposed actions and action audits
 - Durable Telegram inbox and outbox queues
 - Ordinary-event notification preferences and durable scheduler queues or outbox records
 - OAuth credentials and multi-user Google integrations
-- External registration, payment, and web-interface data
+- Email/password credentials and verification or recovery tokens
+- Paid-plan catalog metadata, payment subscriptions, and payment webhook claims
+- Browser-local UI state and frontend analytics

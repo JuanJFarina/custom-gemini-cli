@@ -2,7 +2,7 @@
 
 ## Scope
 
-This plan advances Harle from the implemented controlled beta described in [Features](02_FEATURES.md) and the [SRS](03_SRS.md) to a broad commercial release without expanding the first-product channel beyond Telegram.
+This plan advances Harle from the implemented controlled beta described in [Features](02_FEATURES.md) and the [SRS](03_SRS.md) to a broad commercial release. Telegram remains the first conversational channel, while the separate `harle-frontend` project consumes the authenticated web API owned by this backend.
 
 The current beta already includes multi-user identity, user-scoped profiles and conversations, internal expenses, one-time and simple recurring events with process-local Telegram notifications, native Telegram image and audio input, a best-effort recent-media tool, Juan-only Google Sheets expenses, Telegram deduplication and ordering, temporary bans, and plan quotas.
 
@@ -15,15 +15,15 @@ This plan covers:
 ## Technology Decisions
 
 - Telegram is the only commercial chat channel in the first version.
-- Registration, web UI, payments, and subscription ownership remain in the external product.
+- The separate frontend repository owns browser presentation. This backend owns the unversioned `/api` contract, Google authentication, server-side sessions, renewable free subscription state, Telegram linking, and all business rules. Email/password and paid subscriptions are later work.
 - Production uses PostgreSQL; the CLI remains a local development interface.
 - FastAPI runs as one process while rate limits, in-flight quotas, per-user ordering, and the five-minute event scheduler are process-local.
 - Harle and user-specific stores, profiles, context, and tool handlers remain request-scoped.
 - Process-scoped repositories and clients must not retain a current user.
 - Commercial users receive PostgreSQL expenses and events.
 - Juan receives PostgreSQL events and private legacy Google Sheets expenses based only on his configured internal UUID.
-- Plans will carry separate conversation and event-notification limits. The provisional free, basic, and max notification limits are 15, 60, and 240 successful deliveries per synchronized subscription period.
-- The external account product will synchronize each user's exact current `subscription_period_starts_at` and `subscription_period_ends_at` UTC boundaries. These boundaries, rather than account creation, an original subscription date, or UTC calendar months, will define both allowance periods.
+- The initial Gratuito, Básico, and Max plans cost ARS 0, 5,000, and 15,000 per month. They include 60, 480, and 1,920 conversations plus 15, 60, and 240 event notifications per synchronized subscription period.
+- The backend commerce service will synchronize each user's provider-confirmed `subscription_period_starts_at` and `subscription_period_ends_at` UTC boundaries. These boundaries, rather than account creation, an original subscription date, or UTC calendar months, will define both allowance periods.
 - Event-notification allowance will be reserved before Gemini and consumed only after successful Telegram delivery for either event type.
 - Current controlled-beta schema changes use ordered idempotent SQL scripts. Versioned migrations remain required before broad launch.
 - The current data model is defined in the [ERD](05_ERD.md).
@@ -62,23 +62,25 @@ Exit criteria:
 - Free, basic, and max users are limited to 15, 60, and 240 successful event notifications per synchronized subscription period without consuming conversation quota.
 - Quota admission happens before Gemini, failed attempts consume nothing, delivered occurrences count once, and the user receives at most one non-Gemini exhaustion notice per synchronized subscription period.
 
-### 2. Broad-Launch Transaction and Delivery Safety
+### 2. Free Web Registration and Telegram Linking
 
 Goals:
 
-- Replace ordered schema scripts with checksummed, versioned, forward-only migrations.
-- Add direct-versus-inferred write authorization at runtime.
-- Persist proposed actions, confirmation, cancellation, expiration, execution state, and action audits.
-- Add durable Telegram inbox and outbox processing with leases, bounded retries, and stable idempotency keys.
-- Synchronize plan, subscription state, and exact current subscription-period boundaries from the external account product through an authenticated, idempotent contract.
+- Implement the unversioned `/api` contract documented in the SRS for Google identity, sessions, free-account state, and Telegram linking.
+- Add Google OpenID Connect, revocable secure-cookie sessions, CSRF protection, explicit CORS origins, and endpoint-specific abuse controls.
+- Provision complete active free accounts with required profiles and automatically renewable exact monthly allowance periods.
+- Add short-lived, single-use Telegram account linking through the existing bot webhook.
+- Keep browser identity and linking services separate from agent, tool, conversation, and model code.
+- Continue using one ordered idempotent schema script for this focused release; checksummed migration infrastructure remains broad-launch work.
 
 Exit criteria:
 
-- Application startup never mutates schema and refuses incompatible migration state.
-- Inferred writes cannot execute before same-user confirmation.
-- Every modifying action has one redacted audit record.
-- Accepted Telegram work resumes safely after a process restart.
-- Subscription updates are authenticated, idempotent, update exact allowance boundaries, and stop revoked users before assistant execution.
+- `harle-frontend` can complete Google registration, inspect the session, create a Telegram deep link, and observe successful linking through `/api` without direct database access.
+- Sessions are revocable, browser writes are CSRF-protected, Google OAuth state, nonce, PKCE, issuer, and audience are verified, and ownership never comes from a client-supplied user UUID.
+- First login creates one complete free account; later logins by the same Google subject reuse it.
+- Active free periods advance automatically before conversation and scheduled access while preserving monthly boundaries.
+- One Telegram identity cannot be linked to two users, and expired or replayed link tokens cannot attach an identity.
+- Link commands never invoke Gemini, and ordinary linked messages continue through the existing agent admission path.
 
 ### 3. Privacy and Operations
 
@@ -148,7 +150,11 @@ Exit criteria:
 - **Sensitive logging**: Use structured allowlisted fields and test that protected content is absent.
 - **Recurring notification duplication**: Compare `last_notified_at` with the computed occurrence window and update it only after successful Telegram delivery.
 - **Notification quota drift**: Use a successful-delivery ledger plus process-local in-flight reservations, retain consumed usage when an event is deleted, and reconcile quota persistence with durable outbox work before multiple workers are allowed.
-- **Subscription-period drift**: Treat synchronized current-period boundaries as external account data, validate that start precedes end, and never infer billing periods from local account timestamps.
+- **Subscription-period drift**: Treat synchronized current-period boundaries as provider-confirmed commerce data, validate that start precedes end, and never infer billing periods from local account timestamps.
+- **Web account takeover**: Use current password hashing, short-lived one-time tokens, revocable sessions, Google OAuth state and nonce validation, CSRF protection, rate limits, and recent-authentication checks for destructive actions.
+- **Payment-state forgery**: Trust only authenticated Mercado Pago reconciliation and webhook data; never activate a subscription from a browser redirect.
+- **Account-link takeover**: Bind Telegram link tokens to one authenticated account, expire and consume them once, and atomically enforce provider-identity uniqueness.
+- **Contract drift**: Keep the backend SRS endpoint catalog authoritative, version breaking changes, and run consumer-contract tests with `harle-frontend`.
 - **Excessive proactive messaging**: Evaluate interaction events only after same-user ordinary events, apply the user's explicit high, medium, or low frequency with interval-independent probability, reset it after every successful assistant delivery, and enforce the seven-day user-inactivity cutoff.
 - **Scheduled context loss**: Persist each successfully delivered scheduled message without fabricating a user prompt so a later reply has the assistant-initiated context.
 - **Sensitive media references**: Keep Telegram file identifiers out of logs and model context, retain no raw bytes after active use, and scope every recent-media lookup by internal user UUID.
@@ -168,7 +174,9 @@ Exit criteria:
 
 ## Open Product Decisions
 
-- Final plan names, conversation and event-notification limits, upgrades, downgrades, carry-over, and failed-payment grace behavior
+- Trials, upgrades, downgrades, proration, carry-over, refunds, taxes, cancellation timing, and failed-payment grace behavior
+- Transactional email provider, password policy, session lifetime, and Google-account linking policy
+- Telegram link lifetime, relinking, unlinking, and account-recovery behavior
 - Proposed-action lifetime and Telegram confirmation experience
 - Conversation, inbox, outbox, expense, event, audit, and backup retention
 - Export format, deletion SLA, credential revocation, and supported operating region

@@ -1,3 +1,4 @@
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import cast
@@ -5,6 +6,8 @@ from typing import cast
 from harle_domain.messaging import TelegramMediaReference
 
 from .media import MAX_MEDIA_REQUEST_SIZE, RejectedMedia, extract_media
+
+TELEGRAM_LINK_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 
 
 @dataclass(frozen=True)
@@ -43,6 +46,16 @@ def extract_telegram_message(
     if envelope is None:
         return None
     return _message_content(envelope, maximum_request_size)
+
+
+def extract_telegram_link_token(text: str) -> str | None:
+    command, separator, token = text.strip().partition(" ")
+    if command.split("@", maxsplit=1)[0] != "/start" or not separator:
+        return None
+    normalized = token.strip()
+    if not TELEGRAM_LINK_TOKEN_PATTERN.fullmatch(normalized):
+        return None
+    return normalized
 
 
 def _telegram_envelope(

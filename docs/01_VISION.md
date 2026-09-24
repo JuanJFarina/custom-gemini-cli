@@ -18,6 +18,8 @@ It should be fast enough to feel instant, cheap enough to use constantly, privat
 
 The product should make useful action feel natural. A conversation should be able to become help with personal finance, productivity, planning, reminders, companionship, or any other life-management task without forcing the user into rigid workflows.
 
+Telegram should remain the primary conversational surface. A separate web frontend should make the product easy to discover, subscribe to, connect, and control, while this backend provides the authenticated API and remains the source of truth for accounts, plans, usage, profiles, expenses, and events.
+
 ## Product Posture
 
 Harle should be human-like in tone and behavior, but transparent and disciplined about its identity. It should be brief when brief is enough, thoughtful when the topic deserves care, and proactive when the user benefits from being reminded, encouraged, questioned, or warned.
@@ -25,6 +27,8 @@ Harle should be human-like in tone and behavior, but transparent and disciplined
 The assistant should build a perception of the user over time. It should understand preferences, goals, routines, worries, and unfinished situations. It should be able to notice when a follow-up matters and take autonomous action in service of the user, such as asking how a task is going or surfacing something that should not be forgotten.
 
 Harle may read or query the user's connected environment when that helps answer a request. It should only modify that environment when the user directly requested the modification, or after the user approves a modification Harle proposed. Its autonomy should support the user's agency, not bypass it.
+
+Web management should complement conversation rather than replace it. It should give users a precise way to inspect and manage their account and structured data without turning the assistant into a dashboard-first product.
 
 Efficiency is part of the product identity. Harle should pursue the fastest useful answer at the lowest reasonable cost, using strong engineering choices, simple systems, and tools only when they create real value.
 
